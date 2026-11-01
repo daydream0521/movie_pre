@@ -1,0 +1,4 @@
+﻿algorithm,mae_mean,mae_std,rmse_mean,rmse_std,coverage_mean,coverage_std,fallback_rate_mean,build_seconds_mean,predict_seconds_mean
+baseline,0.8362,0.009,1.0437,0.0119,1.0,0.0,0.0,0.0,0.001
+item,0.7332,0.0089,0.9415,0.0112,0.9919,0.0012,0.0082,0.048,0.1232
+user,0.7295,0.0048,0.937,0.0061,0.9971,0.0002,0.0029,0.0248,0.1668

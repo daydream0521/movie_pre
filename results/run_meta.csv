@@ -1,0 +1,9 @@
+,value
+run_at,2026-11-01 19:14:23
+python,3.12.7
+platform,Windows AMD64
+cpu,"AMD64 Family 25 Model 97 Stepping 2, AuthenticAMD"
+numpy,1.26.4
+pandas,2.2.2
+K_default,30
+fold_for_e2_e3,1

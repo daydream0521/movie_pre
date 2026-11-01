@@ -1,0 +1,31 @@
+# ---- 数据（MovieLens 原始数据不再分发，禁止入库）----
+data/
+!data/.gitkeep
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+.python-version
+
+# ---- 缓存与临时文件 ----
+.streamlit/secrets.toml
+.pytest_cache/
+.ipynb_checkpoints/
+*.log
+~$*
+
+# ---- 编辑器/系统 ----
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# ---- 实验中间产物（结果 CSV/PNG 需要入库，中间缓存不入库）----
+results/cache/
+
+# ---- 页面截图的临时工作目录（正式截图在 docs/screenshots/）----
+.shots/
