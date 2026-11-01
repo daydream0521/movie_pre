@@ -1,0 +1,77 @@
+$ python scripts/run_experiments.py
+
+== E1 五折算法比较 ==
+  fold 1 完成：baseline RMSE=1.0630, user RMSE=0.9472, item RMSE=0.9604
+  fold 2 完成：baseline RMSE=1.0467, user RMSE=0.9374, item RMSE=0.9387
+  fold 3 完成：baseline RMSE=1.0329, user RMSE=0.9355, item RMSE=0.9315
+  fold 4 完成：baseline RMSE=1.0367, user RMSE=0.9319, item RMSE=0.9356
+  fold 5 完成：baseline RMSE=1.0393, user RMSE=0.9329, item RMSE=0.9411
+
+E1 用时 4.0s
+algorithm  mae_mean  mae_std  rmse_mean  rmse_std  coverage_mean  coverage_std  fallback_rate_mean  build_seconds_mean  predict_seconds_mean
+ baseline    0.8362   0.0090     1.0437    0.0119         1.0000        0.0000              0.0000              0.0000                0.0010
+     item    0.7332   0.0089     0.9415    0.0112         0.9919        0.0012              0.0082              0.0496                0.1212
+     user    0.7295   0.0048     0.9370    0.0061         0.9971        0.0002              0.0029              0.0272                0.1844
+
+== E2 邻居数 K 的影响（固定 u1）==
+  K=5 完成
+  K=10 完成
+  K=20 完成
+  K=30 完成
+  K=50 完成
+E2 用时 1.6s
+ fold algorithm  K    mae   rmse  coverage  fallback_count  mean_neighbors  predict_seconds
+    1      user  5 0.7659 0.9867    0.9969              63            4.94            0.137
+    1      item  5 0.7622 0.9927    0.9918             164            4.93            0.124
+    1      user 10 0.7439 0.9567    0.9969              63            9.75            0.129
+    1      item 10 0.7500 0.9681    0.9918             164            9.67            0.088
+    1      user 20 0.7377 0.9477    0.9969              63           18.93            0.119
+    1      item 20 0.7477 0.9620    0.9918             164           18.38            0.093
+    1      user 30 0.7375 0.9472    0.9969              63           27.46            0.125
+    1      item 30 0.7475 0.9604    0.9918             164           26.03            0.090
+    1      user 50 0.7387 0.9480    0.9969              63           42.39            0.121
+    1      item 50 0.7497 0.9614    0.9918             164           38.15            0.095
+
+== E3 训练记录减少的模拟实验（固定 u1）==
+  保留比例 100%（实际 100.0%，80000 条）完成
+  保留比例 50%（实际 50.0%，39993 条）完成
+  保留比例 25%（实际 25.0%，19993 条）完成
+E3 用时 1.2s
+ fold  target_ratio  actual_ratio  train_rows algorithm  K    mae   rmse  coverage  fallback_count  density_pct  users_single_rating
+    1          1.00        1.0000       80000      user 30 0.7375 0.9472    0.9969              63        5.044                    0
+    1          1.00        1.0000       80000      item 30 0.7475 0.9604    0.9918             164        5.044                    0
+    1          0.50        0.4999       39993      user 30 0.7831 1.0053    0.9782             435        2.521                    0
+    1          0.50        0.4999       39993      item 30 0.8103 1.0487    0.9604             793        2.521                    0
+    1          0.25        0.2499       19993      user 30 0.8640 1.1145    0.7856            4287        1.260                    1
+    1          0.25        0.2499       19993      item 30 0.9025 1.1804    0.7602            4796        1.260                    1
+
+全部完成，总用时 6.9s；结果目录：E:\大学\大三上\机器学习\movie_pre\results
+
+==============================================
+$ python -m streamlit run app.py --server.port 8502
+
+
+  You can now view your Streamlit app in your browser.
+
+  Local URL: http://localhost:8502
+  Network URL: http://192.168.52.252:8502
+  External URL: http://223.104.87.9:8502
+
+GET http://localhost:8502 -> HTTP 200
+
+# 页面烟测
+$ python tests/test_app_smoke.py
+[OK] 概览           markdown=15 dataframe=1 charts/other=1
+[OK] 原理实验室        markdown=10 dataframe=0 charts/other=0
+[OK] 电影推荐         markdown=37 dataframe=1 charts/other=3
+[OK] 实验结果         markdown=13 dataframe=3 charts/other=6
+[OK] 从 CF 到深度学习   markdown=13 dataframe=1 charts/other=0
+[OK] 原理实验室：切换 Item-CF / K=1 / 下一步 均无异常
+[OK] 电影推荐：切换算法 / K=5 均无异常
+全部页面烟测通过
+
+# 单元测试
+$ python -m pytest tests -q
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+10 passed, 2 warnings in 3.25s

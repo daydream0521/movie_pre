@@ -31,6 +31,8 @@ python -m venv .venv && .venv\Scripts\activate     # Windows
 python -m pip install -r requirements.txt
 ```
 
+**环境说明**：本机复用了已有的 conda `base` 环境（Python 3.12.7，numpy 1.26.4 / pandas 2.2.2 / scipy 1.13.1 / streamlit 1.37.1 均已就绪），因此没有另建 venv。实际执行的命令、完整输出、启动日志与测试结果都记录在 **`docs/run_log.txt`** 中，可逐行对照。
+
 只想要某个实验：
 
 ```bash
@@ -71,7 +73,9 @@ movie_pre/
 ├── docs/
 │   ├── experiment_report.md   # 实验设置、实测数据、结论、局限
 │   ├── presentation_outline.md# 12 页课堂展示结构
-│   └── speaker_notes.md       # 逐页讲稿、Demo 流程、10 个问答
+│   ├── speaker_notes.md       # 逐页讲稿、Demo 流程、12 个问答
+│   ├── run_log.txt            # 本次真实执行日志（实验 + 启动 + 测试）
+│   └── screenshots/           # 五个页面的实际截图（PPT 可直接用）
 └── data/                      # MovieLens 原始数据（.gitignore，不入库）
 ```
 
@@ -133,7 +137,7 @@ E1，五个官方 fold，K=30：
 | **Item-CF** | 0.7332 ± 0.0089 | 0.9415 ± 0.0112 | 99.19% | 0.82% |
 
 * 两种 CF 都比均值基准好约 0.10 RMSE；User-CF 在 5 折中的 4 折优于 Item-CF，但差距（0.0045）小于折间波动（标准差 0.006–0.011），**不能据此断言谁绝对更强**。
-* 构建相似度：用户 0.025 s / 物品 0.048 s；2 万条测试评分批量预测 0.17 s / 0.12 s（纯 CPU）。
+* 构建相似度：用户约 0.03 s / 物品约 0.05 s；2 万条测试评分批量预测 0.12–0.18 s（纯 CPU、单进程；耗时随机器浮动，指标不受影响）。
 
 E2（固定 u1，K 敏感性）：RMSE 随 K 从 5→20 明显下降（User-CF 0.9867→0.9477），K=20~30 达到最好，K=50 略回升（0.9480）。覆盖率基本不变（99.69% / 99.18%），因为回退只发生在“一个邻居都没有”时。
 
