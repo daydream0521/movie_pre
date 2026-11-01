@@ -29,3 +29,6 @@ results/cache/
 
 # ---- 页面截图的临时工作目录（正式截图在 docs/screenshots/）----
 .shots/
+
+# ---- 助手工作目录 ----
+.workbuddy/

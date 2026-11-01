@@ -569,9 +569,29 @@ def page_results():
             best = e2.loc[e2.groupby("algorithm")["rmse"].idxmin()]
             txt = "；".join(f"{names[r['algorithm']]} 在 K={int(r['K'])} 时 RMSE 最低（{r['rmse']:.4f}）"
                            for _, r in best.iterrows())
-            st.markdown(f"- {txt}。\n- 曲线是**实测**的：如果某个算法在 K 过大时 RMSE 回升，"
-                        "说明把“没那么像”的邻居也算进来会稀释信号。\n"
-                        "- 覆盖率随 K 上升，因为 K 越大，越容易凑够邻居。")
+            du = e2[e2.algorithm == "user"].sort_values("K")
+            di = e2[e2.algorithm == "item"].sort_values("K")
+            cov_span = max(du["coverage"].max() - du["coverage"].min(),
+                           di["coverage"].max() - di["coverage"].min())
+            tail = "；".join(
+                f"{names[a]} 在 K={int(d['K'].iloc[-1])} 时 RMSE 比最低点高 {d['rmse'].iloc[-1] - d['rmse'].min():+.4f}"
+                for a, d in (("user", du), ("item", di))
+            )
+            st.markdown(f"- {txt}。\n")
+            st.markdown(
+                "- 曲线是**实测**的：K 从最小值增加到中等时 RMSE 下降较快，说明邻居太少会让少数极端邻居主导预测；"
+                f"再继续增大时变化很小（{tail}），并入较弱邻居的代价被大量平均抵消。\n"
+            )
+            if cov_span < 0.005:
+                st.markdown(
+                    f"- 覆盖率几乎不随 K 变化（波动 {cov_span*100:.2f} 个百分点）："
+                    "回退只发生在“一个提供证据的正相似邻居都没有”时，K 再大也补不出来。"
+                    "这一点与“K 越大覆盖率越高”的直觉不同。"
+                )
+            else:
+                st.markdown(
+                    f"- 覆盖率随 K 上升（波动 {cov_span*100:.2f} 个百分点）：K 越大越容易凑够邻居。"
+                )
             st.dataframe(e2, hide_index=True, use_container_width=True)
 
     with tab3:
