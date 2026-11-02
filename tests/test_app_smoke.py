@@ -44,12 +44,32 @@ def main() -> int:
     assert not at.exception
     print("[OK] 原理实验室：切换 Item-CF / K=1 / 下一步 均无异常")
 
+    # 目标电影已被打分：应走「隐藏该评分」的分支，而不是当成空白格
+    at.selectbox(key="lab_user").set_value(0).run()
+    at.selectbox(key="lab_item").set_value(0).run()
+    assert not at.exception, [e.value for e in at.exception]
+    assert any("隐藏" in m.value for m in at.markdown), "已评分目标没有给出隐藏说明"
+    print("[OK] 原理实验室：目标电影已评分 → 隐藏该评分并说明原因")
+
     at = run_page("电影推荐")
     at.radio(key="rec_algo").set_value("Item-CF").run()
     assert not at.exception
     at.select_slider(key="rec_k").set_value(5).run()
     assert not at.exception
     print("[OK] 电影推荐：切换算法 / K=5 均无异常")
+
+    # 随机换用户：按钮必须真的改掉 selectbox 的值（曾因改错 session_state 键而失效）
+    before = at.selectbox(key="rec_user_select").value
+    btn = [b for b in at.button if "随机" in b.label][0]
+    btn.click().run()
+    after = at.selectbox(key="rec_user_select").value
+    assert after != before, f"随机换用户没有生效（仍为 {before}）"
+    print(f"[OK] 电影推荐：随机换用户 {before} → {after}")
+
+    for view in ("双算法对比", "同一部电影，两种解释"):
+        at.radio(key="rec_view").set_value(view).run()
+        assert not at.exception, [e.value for e in at.exception]
+    print("[OK] 电影推荐：对比视图 / 同片双解释 均无异常")
 
     print("全部页面烟测通过")
     return 0

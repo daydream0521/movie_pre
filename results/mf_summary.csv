@@ -1,0 +1,2 @@
+﻿algorithm,folds,k,iterations,mae_mean,mae_std,rmse_mean,rmse_std,train_seconds_mean
+mf,5,30,15,0.7225,0.0062,0.9202,0.0072,3.75

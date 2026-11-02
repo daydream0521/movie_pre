@@ -141,3 +141,101 @@ def test_hand_calculation_is_reproducible():
 
 def test_tutorial_has_missing_cells():
     assert any(v is None for row in TUTORIAL_RATINGS for v in row)
+
+
+# --------------------------------------------------------------- 教学页一致性
+def test_step3_neighbors_equal_step4_neighbors():
+    """第 3 步选出的邻居必须与第 4 步实际参与加权的人完全一致。
+
+    曾出现的 bug：第 3 步只按相似度 >0 取 Top-K，没要求「给目标电影评过分」，
+    于是表中会出现第 4 步根本没用到的人。
+    """
+    from src.tutorial import TUTORIAL_MOVIES, TUTORIAL_RATINGS, TUTORIAL_USERS, movie_label, steps
+
+    id2idx = {m[0]: k for k, m in enumerate(TUTORIAL_MOVIES)}
+    for algo in (ALGO_USER, ALGO_ITEM):
+        for u in range(len(TUTORIAL_USERS)):
+            for i in range(len(TUTORIAL_MOVIES)):
+                hide = (u, i) if TUTORIAL_RATINGS[u][i] is not None else None
+                for K in (1, 2, 3, 4):
+                    st = steps(algo, u, i, K, hide=hide)
+                    table = st[2]["data"]["table"]
+                    model, _ = build_tutorial_model(hide=hide)
+                    ex = model.explain(u, i, algo, K=K)
+                    if algo == ALGO_USER:
+                        got = set(table["用户"])
+                        want = (set() if ex.is_fallback else
+                                {TUTORIAL_USERS[int(x) - 1] for x in ex.neighbors["neighbor_user_id"]})
+                    else:
+                        got = set(table["候选电影"])
+                        want = (set() if ex.is_fallback else
+                                {movie_label(id2idx[int(x)]) for x in ex.neighbors["neighbor_item_id"]})
+                    assert got == want, f"{algo} user={u} item={i} K={K}: {got} != {want}"
+
+
+def test_rated_target_is_hidden_from_matrix():
+    """目标用户已评分时，该条评分必须从建模矩阵里移除，否则「预测」没有意义。"""
+    from src.tutorial import TUTORIAL_USERS, steps, target_is_rated, true_rating
+
+    assert target_is_rated(0, 0) and true_rating(0, 0) == 5.0
+    model, train = build_tutorial_model(hide=(0, 0))
+    assert train.M[0, 0] == 0
+    assert train.n_ratings == sum(1 for row in TUTORIAL_RATINGS for v in row if v is not None) - 1
+    st = steps(ALGO_USER, 0, 0, 3, hide=(0, 0))
+    assert st[0]["data"]["hidden"] is True
+    assert "隐藏" in st[-1]["body"]                 # 结论里要交代真实评分
+    # 未隐藏时，同一格仍然在矩阵里
+    _, train_full = build_tutorial_model()
+    assert train_full.M[0, 0] == 1
+
+
+def test_baseline_has_no_coverage():
+    """用户均值基准不需要邻居，覆盖率必须是不适用（NaN），不能算成 100%。"""
+    model, _ = build_tutorial_model()
+    res = model.predict_baseline(np.array([[0, 3], [1, 0]]))
+    assert np.isnan(res.coverage)
+    assert not res.coverage_applicable
+    cf = model.predict(np.array([[0, 3]]), ALGO_USER, K=3)
+    assert not np.isnan(cf.coverage)
+
+
+def test_recommend_ranks_by_weighted_sum():
+    """Top-N 用加权和排序：非回退条目按 rank_score 严格不增，分数与 explain 的分子一致。"""
+    model, _ = build_tutorial_model()
+    rec = model.recommend(0, ALGO_USER, K=3, n=4)
+    assert not rec.empty
+    live = rec[~rec["is_fallback"]]
+    assert list(live["rank_score"]) == sorted(live["rank_score"], reverse=True)
+    top = rec.iloc[0]
+    ex = model.explain(0, int(top["item_idx"]), ALGO_USER, K=3)
+    assert top["rank_score"] == pytest.approx(ex.rank_score, abs=1e-5)
+    # 预测分仍然由 mean + 分子/分母 得到
+    assert top["pred"] == pytest.approx(np.clip(ex.base + ex.rank_score / ex.sim_sum, 1, 5), abs=1e-4)
+
+
+def test_ndcg_and_topk_helpers():
+    from src.evaluation import ndcg_at_k, topk_from_scores
+
+    rel = {1, 2}
+    assert ndcg_at_k(np.array([1, 2, 3]), rel, 3) == pytest.approx(1.0)
+    assert ndcg_at_k(np.array([9, 9, 9]), rel, 3) == 0.0
+    # 命中排在第 1 位应高于命中排在第 3 位
+    assert ndcg_at_k(np.array([1, 9, 9]), rel, 3) > ndcg_at_k(np.array([9, 9, 1]), rel, 3)
+
+    scores = np.array([0.1, 0.9, 0.5, 0.7])
+    seen = np.array([False, True, False, False])   # 已看过 1 号，不该出现
+    top = topk_from_scores(scores, seen, 2)
+    assert list(top) == [3, 2]
+
+
+def test_bias_mf_fits_and_predicts_in_range():
+    """扩展模型的最小冒烟：ALS 收敛后预测必须在 [1,5]，且不产生 NaN。"""
+    from src.mf import BiasMF
+
+    _, train = build_tutorial_model()
+    mf = BiasMF(k=5, iterations=10).fit(train)
+    pairs = np.array([[0, 3], [1, 4], [4, 0]])
+    preds = mf.predict_pairs(pairs)
+    assert np.isfinite(preds).all()
+    assert ((preds >= 1.0) & (preds <= 5.0)).all()
+    assert mf.score_all(0).shape == (train.n_items,)

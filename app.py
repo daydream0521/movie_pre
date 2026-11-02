@@ -22,6 +22,7 @@ from src.data import (
 from src.tutorial import (
     DEFAULT_K, DEFAULT_TARGET_ITEM, DEFAULT_TARGET_USER, TUTORIAL_MOVIES, TUTORIAL_USERS,
     hand_calculation, movie_label, rating_frame, steps as tutorial_steps,
+    target_is_rated, true_rating,
 )
 from src.ui import (
     ACCENT, ACCENT_2, GOOD, WARN, hero, inject_css, kpi_row, matrix_table, movie_card,
@@ -196,7 +197,17 @@ def page_lab():
                             format_func=movie_label, index=DEFAULT_TARGET_ITEM, key="lab_item")
     K = c4.slider("邻居数 K", 1, 4, DEFAULT_K, key="lab_k")
 
-    steps = tutorial_steps(algo, user_idx, item_idx, K)
+    # 目标用户已经给目标电影打过分时，把这条评分临时隐藏，否则「已知答案还问预测」没有意义
+    hide = (user_idx, item_idx) if target_is_rated(user_idx, item_idx) else None
+    if hide is not None:
+        note(
+            f"<b>{TUTORIAL_USERS[user_idx]}</b> 在原始矩阵中已经给 {movie_label(item_idx)} 打过分"
+            f"（{true_rating(user_idx, item_idx):.0f} 分）。为了演示“预测”，这一格已临时从训练矩阵中移除："
+            "用户均值和相似度都会按隐藏后的矩阵重算，最后可以和真实评分对比。",
+            warn=True,
+        )
+
+    steps = tutorial_steps(algo, user_idx, item_idx, K, hide=hide)
     state_key = f"lab_step_{algo}_{user_idx}_{item_idx}_{K}"
     if state_key not in st.session_state:
         for k in [k for k in st.session_state if k.startswith("lab_step_")]:
@@ -225,8 +236,13 @@ def page_lab():
     data = s["data"]
 
     if visual == "matrix":
-        st.markdown(matrix_table(data["matrix"], data["user"], data["item"]), unsafe_allow_html=True)
-        st.caption("行 = 用户，列 = 电影；“—” 表示没有评分（缺失，不是 0 分）；蓝色行是目标用户，紫色列是目标电影。")
+        st.markdown(matrix_table(data["matrix"], data["user"], data["item"], data.get("hidden", False)),
+                    unsafe_allow_html=True)
+        st.caption(
+            "行 = 用户，列 = 电影；“—” 表示矩阵里没有这条评分（缺失，不是 0 分）；"
+            "蓝色行是目标用户，紫色列是目标电影。"
+            + ("问号格是真实存在、但被临时隐藏的评分。" if data.get("hidden") else "问号格就是要预测的位置。")
+        )
 
     elif visual in ("similarity_table", "topk"):
         df = data["table"]
@@ -261,19 +277,19 @@ def page_lab():
         )
 
     with st.expander("手算复核（4–5 行看完这个预测）", expanded=(step == len(steps) - 1)):
-        st.markdown(hand_calculation(algo, user_idx, item_idx, K))
+        st.markdown(hand_calculation(algo, user_idx, item_idx, K, hide=hide))
 
     with st.expander("老师可能会问", expanded=False):
         st.markdown(
             """
 **1. 空白格子能当成 0 分吗？**
-不能。0 分会把“没看过”误判成“很讨厌”，用户均值被拉低，相似度也会失真。计算相似度时只统计双方共同评过分的电影。
+不能。空白只说明「这条评分没有被记录」，它既可能是没看过，也可能是看过但没评、甚至是不想评。当成 0 分等于替用户断言「极度讨厌」，用户均值会被拉低，相似度也会失真。所以计算只统计双方都有评分的位置。
 
 **2. 为什么要减去用户均值（中心化）？**
 有人习惯全打 4–5 分，有人只打 2–3 分。中心化后比较的是“相对于他自己，这部片算好还是差”，相似度才反映口味而不是打分习惯。
 
 **3. 相似度为什么会出现负数？**
-中心化向量的夹角超过 90°，说明这两人口味相反。负相似度在预测时会反向外推，通常直接不使用——所以本实现只取正相似邻居。
+中心化向量的夹角超过 90°，说明这两人口味相反。**本实现选择不使用负相似邻居**：在 `Σ|sim|` 归一化下，负权重会让“邻居低于他自己均值”变成“预测高于均值”，容易把结果推到区间外。这是设计选择而不是数学必需——若保留负相似，需要重新讨论归一化方式并接受更多越界预测。
 
 **4. 共同评分为 1 部电影时，相似度能信吗？**
 不能。一部片的巧合不足以说明口味，真实实验中要求共同评分 ≥ 3，并用 n/(n+10) 收缩相似度（本页小矩阵为便于手算关闭了这两项）。
@@ -284,7 +300,105 @@ User-CF 找“人”（谁给我参考分），Item-CF 找“物”（我喜欢�
         )
 
 
+def _rank_of(rec: pd.DataFrame | None, item_idx: int) -> int | None:
+    """某部电影在推荐列表中的名次（1 起），不在列表里返回 None。"""
+    if rec is None or rec.empty:
+        return None
+    hit = np.flatnonzero(rec["item_idx"].to_numpy() == item_idx)
+    return int(hit[0]) + 1 if hit.size else None
+
+
+def _mean_gap(rec_u: pd.DataFrame, rec_i: pd.DataFrame, common: set[int]) -> float:
+    """两种算法在共同推荐条目上的平均预测分歧。"""
+    if not common:
+        return float("nan")
+    a = rec_u[rec_u["item_idx"].isin(common)].set_index("item_idx")["pred"]
+    b = rec_i[rec_i["item_idx"].isin(common)].set_index("item_idx")["pred"]
+    return float((a - b).abs().mean())
+
+
+def _pick_random_user(all_users: list[int], key: str = "rec_user_select") -> None:
+    """button 的 on_click 回调：在脚本执行前改 selectbox 的 session_state。"""
+    current = st.session_state.get(key)
+    pool = [u for u in all_users if u != current] or all_users
+    st.session_state[key] = random.choice(pool)
+
+
 # --------------------------------------------------------------------- 页面：电影推荐
+def _rec_cards(df: pd.DataFrame, model, meta: dict, empty_hint: str = ""):
+    """Top-N 电影卡片：徽标是推荐分（排序依据），小字给出预测评分与邻居数。"""
+    if df.empty:
+        if empty_hint:
+            st.caption(empty_hint)
+        return
+    cols = st.columns(5)
+    for i, (_, r) in enumerate(df.iterrows()):
+        item_id = int(model.train.item_ids[int(r["item_idx"])])
+        m = meta[item_id]
+        nbr_txt = f"{int(r['n_neighbors'])} 个邻居" if not r["is_fallback"] else "无邻居"
+        cols[i % 5].markdown(
+            movie_card(
+                m["title"], m["year"], m["genres"], float(r["pred"]),
+                meta=f"预测 {r['pred']:.2f} · {nbr_txt}",
+                rank=i + 1, fallback=bool(r["is_fallback"]), item_id=item_id,
+                score_text="回退" if r["is_fallback"] else f"{r['rank_score']:.2f}",
+            ),
+            unsafe_allow_html=True,
+        )
+
+
+def _explain_block(model, meta: dict, u_idx: int, item_idx: int, algo: str, K: int,
+                   heading: str | None = None, show_chart: bool = True) -> None:
+    """渲染单条推荐的加权依据：来源表 + 贡献条形图。"""
+    ex = model.explain(u_idx, item_idx, algo, K=K)
+    item_id = int(model.train.item_ids[item_idx])
+    m = meta[item_id]
+    if heading:
+        st.markdown(f"**{heading}**")
+
+    st.markdown(
+        f'<div class="kpi" style="margin-bottom:8px">'
+        f'<div class="label">{m["genres"]}</div>'
+        f'<div class="value" style="font-size:1.05rem">{m["title"]}'
+        f'{" (" + str(int(m["year"])) + ")" if pd.notna(m["year"]) else ""}</div>'
+        f'<div class="hint">推荐分 {ex.rank_score:.3f}　|　预测 {ex.pred:.3f}　|　'
+        f'mean(u) {ex.base:.3f}　|　Σ|sim| {ex.sim_sum:.3f}'
+        f'{"　|　均值回退" if ex.is_fallback else ""}</div></div>',
+        unsafe_allow_html=True,
+    )
+    st.caption(ex.formula)
+
+    if ex.neighbors.empty:
+        note("这个目标没有可用的正相似邻居，预测退化为该用户的训练均值，不能当作协同过滤的结果。", warn=True)
+        return
+
+    nb = ex.neighbors.copy()
+    if algo == ALGO_USER:
+        nb["来源"] = ["用户 " + str(int(x)) for x in nb["neighbor_user_id"]]
+        nb = nb[["来源", "similarity", "rating", "contribution"]]
+        nb.columns = ["来源（相似用户）", "相似度", "TA 给这部片的评分", "对预测的贡献"]
+        contrib_col, label_col = "对预测的贡献", "来源（相似用户）"
+    else:
+        nb["来源"] = [meta[int(model.train.item_ids[int(x)])]["title"] for x in nb["neighbor_item_id"]]
+        nb = nb[["来源", "similarity", "user_rating", "contribution"]]
+        nb.columns = ["来源（相似电影）", "相似度", "你给它的评分", "对预测的贡献"]
+        contrib_col, label_col = "对预测的贡献", "来源（相似电影）"
+
+    st.dataframe(nb.style.format({
+        "相似度": "{:.4f}", "对预测的贡献": "{:+.4f}",
+        "TA 给这部片的评分": "{:.0f}", "你给它的评分": "{:.0f}",
+    }), hide_index=True, use_container_width=True)
+
+    if show_chart:
+        cnt = nb.iloc[::-1]
+        fig = go.Figure(go.Bar(
+            x=cnt[contrib_col], y=cnt[label_col], orientation="h",
+            marker_color=[GOOD if v >= 0 else "#ef4444" for v in cnt[contrib_col]],
+        ))
+        fig.update_layout(showlegend=False, title="各邻居对预测分的贡献（已除以 Σ|sim|）")
+        st.plotly_chart(dark(fig, max(200, 24 * len(cnt))), use_container_width=True)
+
+
 def page_recommend():
     ratings, movies, users, items, summary = get_catalog()
     meta = get_movie_meta()
@@ -294,49 +408,57 @@ def page_recommend():
     hero(
         "电影推荐体验",
         "real data · u1.base 训练",
-        "从 943 名真实用户中选一位，用训练集里他/她的历史评分生成 Top-10，"
-        "并展开任一条推荐的加权依据。测试集评分不参与推荐。",
+        "选一位真实用户，用训练集里他的历史评分生成 Top-10，并展开任意一条的加权依据。"
+        "切到“双算法对比”，可以直接看到 User-CF 与 Item-CF 给出的不同结果。",
     )
 
-    c1, c2, c3, c4 = st.columns([1.9, 1.1, 1.0, 1.0])
-    default_user = st.session_state.get("rec_user", int(users[0]))
+    all_users = [int(u) for u in users]
+    c1, c2, c3, c4, c5 = st.columns([1.6, 0.55, 1.0, 0.85, 0.85])
     uid = c1.selectbox(
-        "选择一个用户", [int(u) for u in users],
-        index=list(users).index(default_user),
+        "选择一个用户", all_users, index=0,
         format_func=lambda u: f"用户 {u} · u1.base 中 {int(train_counts[int(np.where(model.train.user_ids == u)[0][0])])} 条评分",
         key="rec_user_select",
     )
-    st.session_state["rec_user"] = uid
-    algo_label = c2.radio("算法", ["User-CF", "Item-CF"], horizontal=True, key="rec_algo")
-    algo = ALGO_USER if algo_label == "User-CF" else ALGO_ITEM
-    K = c3.select_slider("邻居数 K", options=[5, 10, 20, 30, 50], value=30, key="rec_k")
-    topn = c4.selectbox("推荐数量", [5, 10, 20], index=1, key="rec_n")
+    # 随机切换必须改 selectbox 自己的 key，并在回调里赋值（脚本运行后再改会抛异常）
+    c2.button(
+        "🎲 随机", on_click=_pick_random_user, args=(all_users,), use_container_width=True,
+        help="随机换一个用户，方便现场对比不同人的推荐结果",
+    )
+    K = c4.select_slider("邻居数 K", options=[5, 10, 20, 30, 50], value=30, key="rec_k")
+    topn = c5.selectbox("推荐数量", [5, 10, 20], index=1, key="rec_n")
 
-    if st.button("换一个用户", key="rec_random"):
-        st.session_state["rec_user"] = random.choice([int(u) for u in users])
-        st.rerun()
+    view = st.radio("视图", ["单算法", "双算法对比", "同一部电影，两种解释"],
+                    horizontal=True, key="rec_view",
+                    help="对比视图会同时计算两种算法，适合回答“它们到底差在哪”")
+    compare = view != "单算法"
+    need_both = view in ("双算法对比", "同一部电影，两种解释")
+
+    algo_label = st.radio(
+        "算法", ["User-CF", "Item-CF"], horizontal=True, key="rec_algo", disabled=compare,
+        help=None if not compare else "对比视图会同时跑两种算法，此处不生效",
+    )
+    algo = ALGO_USER if algo_label == "User-CF" else ALGO_ITEM
 
     u_idx = int(np.where(model.train.user_ids == uid)[0][0])
     n_train_ratings = int(model.M[u_idx].sum())
+    rec_u = model.recommend(u_idx, ALGO_USER, K=K, n=topn) if (need_both or algo == ALGO_USER) else None
+    rec_i = model.recommend(u_idx, ALGO_ITEM, K=K, n=topn) if (need_both or algo == ALGO_ITEM) else None
+    rec_main = rec_u if algo == ALGO_USER else rec_i
     stats = model.neighbor_stats(u_idx, algo)
-    rec = model.recommend(u_idx, algo, K=K, n=topn)
 
     kpi_row([
         ("该用户训练集评分", f"{n_train_ratings}", "u1.base 中出现过的记录"),
         ("全库矩阵密度", f"{summary['density']*100:.2f}%", f"{model.n_users}×{model.n_items} 个格子"),
         ("可用正相似" + ("用户" if algo == ALGO_USER else "电影"), f"{stats['positive_neighbors']}", "相似度 > 0 的候选"),
-        ("候选电影", f"{model.n_items - n_train_ratings}", "已排除他/她看过的片"),
-        ("回退条数", f"{int(rec['is_fallback'].sum())}/{len(rec)}", "无邻居时取用户均值"),
+        ("候选电影", f"{model.n_items - n_train_ratings}", "已排除训练集看过的片"),
+        ("回退条数", f"{int(rec_main['is_fallback'].sum())}/{len(rec_main)}", "无邻居时取用户均值"),
     ])
 
     left, right = st.columns([1.05, 1])
-
     with left:
-        section("他/她给过的高分电影", "训练集中评分 = 5 的代表作")
+        section("他/她给过的高分电影", "训练集中评分 ≥ 4.5 的代表作")
         seen = model.train.ratings_of(u_idx)
-        seen = seen[seen["rating"] >= 4.5].merge(
-            pd.DataFrame({"item_idx": np.arange(model.n_items)}), on="item_idx"
-        )
+        seen = seen[seen["rating"] >= 4.5]
         top_seen = seen.head(8)
         cols = st.columns(4)
         for i, (_, r) in enumerate(top_seen.iterrows()):
@@ -349,14 +471,14 @@ def page_recommend():
                 unsafe_allow_html=True,
             )
         if top_seen.empty:
-            st.caption("该用户在训练集中没有 5 分记录。")
+            st.caption("该用户在训练集中没有 4.5 分以上的记录。")
 
-        section("评分偏好", "最近 60 条训练评分")
+        section("评分分布", f"用户 {uid} 在训练集中的全部评分")
         hist = np.bincount(model.X[u_idx][model.M[u_idx]].astype(int), minlength=6)[1:6]
         fig = go.Figure(go.Bar(x=[f"{i} 分" for i in range(1, 6)], y=hist,
                                marker_color=[ACCENT, ACCENT, "#60a5fa", GOOD, GOOD]))
-        fig.update_layout(showlegend=False, title=f"用户 {uid} 的评分分布（均值 {model.mu[u_idx]:.2f}）")
-        st.plotly_chart(dark(fig, 250), use_container_width=True)
+        fig.update_layout(showlegend=False, title=f"均值 {model.mu[u_idx]:.2f}，共 {n_train_ratings} 条")
+        st.plotly_chart(dark(fig, 240), use_container_width=True)
 
     with right:
         section("类型偏好", "按该用户给过 ≥4 分的电影统计")
@@ -368,107 +490,152 @@ def page_recommend():
                 counter[g] = counter.get(g, 0) + 1
         gser = pd.Series(counter).sort_values(ascending=False).head(8)
         if len(gser):
-            fig = go.Figure(go.Bar(x=gser.values, y=gser.index, orientation="h",
-                                   marker_color=ACCENT_2))
+            fig = go.Figure(go.Bar(x=gser.values, y=gser.index, orientation="h", marker_color=ACCENT_2))
             fig.update_layout(showlegend=False)
             fig.update_yaxes(autorange="reversed")
-            st.plotly_chart(dark(fig, 250), use_container_width=True)
+            st.plotly_chart(dark(fig, 240), use_container_width=True)
         else:
             st.caption("该用户没有 4 分以上的评分。")
 
-        section("这条推荐是怎么算出来的", "")
+        section("排序分与预测分的区别", "")
         note(
-            f"当前算法：<b>{algo_label}</b>；K = {K}。"
-            + ("邻居是“同样看过这部片、且与目标用户相似度为正值”的人。"
-               if algo == ALGO_USER else "邻居是“目标用户看过、且与这部片相似度为正值”的电影。")
-            + " 回退为用户均值的条目会单独标注。"
+            "列表按 <b>推荐分</b>（相似度加权和 Σ sim·偏差）排序；卡片小字里的 <b>预测</b> "
+            "是同一组邻居的加权平均（+ 用户均值）。"
+            "用加权平均排序会让“只有 1 个弱邻居、恰好打 5 分”的冷门片被推到榜首，"
+            "所以 Top-N 用加权和、评分预测用加权平均。"
         )
 
-    section(f"Top-{topn} 推荐", f"{algo_label} · K = {K} · 已排除训练集看过的 {n_train_ratings} 部")
-    rec_cols = st.columns(5)
-    for i, (_, r) in enumerate(rec.iterrows()):
-        item_id = int(model.train.item_ids[int(r["item_idx"])])
-        m = meta[item_id]
-        nbr_txt = f"{int(r['n_neighbors'])} 个邻居支撑" if not r["is_fallback"] else "无邻居"
-        rec_cols[i % 5].markdown(
-            movie_card(m["title"], m["year"], m["genres"], float(r["score"]),
-                       meta=f"预测 {r['score']:.2f} · {nbr_txt}", rank=i + 1,
-                       fallback=bool(r["is_fallback"]), item_id=item_id),
-            unsafe_allow_html=True,
+    if view == "单算法":
+        section(f"Top-{topn} 推荐", f"{algo_label} · K = {K} · 已排除训练集评过的 {n_train_ratings} 部")
+        _rec_cards(rec_main, model, meta)
+        st.caption(
+            "徽标是**推荐分**（相似度加权和，用来排序，不是 1–5 的评分）；"
+            "卡片小字里的“预测”才是同一组邻居的加权平均分。"
         )
-    capped = int((rec["score"] >= 4.995).sum())
-    if capped:
-        note(
-            f"有 {capped} 条预测触顶 5.00：这些目标电影的可用邻居都给了高分，加权后超过上限被裁剪到 5 分。"
-            "看“邻居支撑”列——只靠 1 个邻居的条目证据最弱，这正是 K 与共同评分门槛要解决的问题。"
-        )
+        capped = int((rec_main["pred"] >= 4.995).sum())
+        if capped:
+            st.caption(
+                f"其中 {capped} 条的预测评分触顶 5.00（邻居都给了 5 分，加权后超过上限被裁剪）；"
+                "排序不受裁剪影响，仍按推荐分。"
+            )
 
-    section("查看单条推荐的依据", "选一部，看加权过程")
-    options = [
-        f"#{i+1}  {meta[int(model.train.item_ids[int(r['item_idx'])])]['title']}（预测 {r['score']:.2f}）"
-        for i, (_, r) in enumerate(rec.iterrows())
-    ]
-    pick = st.selectbox("推荐条目", options, index=0, key="rec_pick")
-    row = rec.iloc[options.index(pick)]
-    item_idx = int(row["item_idx"])
-    ex = model.explain(u_idx, item_idx, algo, K=K)
-    item_id = int(model.train.item_ids[item_idx])
-    m = meta[item_id]
+        section("查看单条推荐的依据", "选一部，看加权过程")
+        options = [
+            f"#{i+1}  {meta[int(model.train.item_ids[int(r['item_idx'])])]['title']}"
+            f"（推荐分 {r['rank_score']:.2f}）"
+            for i, (_, r) in enumerate(rec_main.iterrows())
+        ]
+        pick = st.selectbox("推荐条目", options, index=0, key="rec_pick")
+        item_idx = int(rec_main.iloc[options.index(pick)]["item_idx"])
+        _explain_block(model, meta, u_idx, item_idx, algo, K)
 
-    a, b = st.columns([0.8, 1.6])
-    with a:
-        st.markdown(
-            f'<div class="kpi"><div class="label">{m["genres"]}</div>'
-            f'<div class="value" style="font-size:1.15rem">{m["title"]} ({int(m["year"]) if pd.notna(m["year"]) else "—"})</div>'
-            f'<div class="hint">mean(u) = {ex.base:.3f}　Σ|sim| = {ex.sim_sum:.3f}　'
-            f'{"均值回退" if ex.is_fallback else "协同过滤"}</div></div>',
-            unsafe_allow_html=True,
-        )
-        st.caption(ex.formula)
+        with st.expander("为什么同一条推荐在不同 K 下会变化？", expanded=False):
+            st.markdown(
+                "K 限制的是**预测时实际参与的正相似邻居数量**。K 小 → 只用最像的几个，方差大但更贴合；"
+                "K 大 → 平均更稳，但会把“没那么像”的人也算进来，推荐分随之变化。"
+                "卡片上的“N 个邻居”就是这个条目实际用到的邻居数。"
+            )
 
-    with b:
-        if ex.neighbors.empty:
-            note("这个目标没有可用的正相似邻居，预测退化为该用户的训练均值，不能当作协同过滤的结果。", warn=True)
-        else:
-            nb = ex.neighbors.copy()
-            if algo == ALGO_USER:
-                nb["来源"] = ["用户 " + str(int(x)) for x in nb["neighbor_user_id"]]
-                nb["TA 的评分"] = nb["rating"]
-                nb["相似度加权贡献"] = nb["contribution"]
-                nb = nb[["来源", "similarity", "TA 的评分", "相似度加权贡献"]]
-                nb.columns = ["来源（相似用户）", "相似度", "TA 给这部片的评分", "对预测的贡献"]
-            else:
-                nb["来源"] = [
-                    meta[int(model.train.item_ids[int(x)])]["title"] for x in nb["neighbor_item_id"]
-                ]
-                nb["相似度加权贡献"] = nb["contribution"]
-                nb = nb[["来源", "similarity", "user_rating", "相似度加权贡献"]]
-                nb.columns = ["来源（相似电影）", "相似度", "你给它的评分", "对预测的贡献"]
-            st.dataframe(nb.style.format({
-                "相似度": "{:.4f}", "对预测的贡献": "{:+.4f}",
-                "TA 给这部片的评分": "{:.0f}", "你给它的评分": "{:.0f}",
-            }), hide_index=True, use_container_width=True)
-            cnt = nb.iloc[::-1]
-            fig = go.Figure(go.Bar(
-                x=cnt["对预测的贡献"], y=cnt["来源（" + ("相似用户" if algo == ALGO_USER else "相似电影") + "）"],
-                orientation="h", marker_color=[GOOD if v >= 0 else "#ef4444" for v in cnt["对预测的贡献"]],
-            ))
-            fig.update_layout(showlegend=False, title="各邻居对最终预测分的贡献（分）")
-            st.plotly_chart(dark(fig, max(220, 26 * len(cnt))), use_container_width=True)
+    elif view == "双算法对比":
+        set_u = set(rec_u["item_idx"].tolist())
+        set_i = set(rec_i["item_idx"].tolist())
+        common = set_u & set_i
+        union = sorted(set_u | set_i,
+                       key=lambda x: min(_rank_of(rec_u, x) or 999, _rank_of(rec_i, x) or 999))
+        jac = len(common) / max(1, len(set_u | set_i))
+        kpi_row([
+            ("共同推荐", f"{len(common)}", f"两个列表重合 {len(common)}/{topn}，Jaccard {jac:.2f}"),
+            ("只有 User-CF 推", f"{len(set_u - set_i)}", "按“相似的人”选出来的"),
+            ("只有 Item-CF 推", f"{len(set_i - set_u)}", "按“相似的片”选出来的"),
+            ("预测分歧（共同项）", f"{_mean_gap(rec_u, rec_i, common):.2f}", "同一部片两种算法的预测分差"),
+        ])
 
-    with st.expander("为什么同一条推荐在不同 K 下会变化？", expanded=False):
-        st.markdown(
-            "K 限制的是**预测时实际参与的正相似邻居数量**。K 小 → 只用最像的几个，方差大但更贴合；"
-            "K 大 → 平均更稳，但会把“没那么像”的人也算进来，可能向人群均值靠拢。"
-            "每张卡片上的“N 个邻居支撑”就是这个条目实际用到的邻居数。"
+        section("Top 推荐并排对比", f"K = {K} · 同一候选集（已排除训练集评过的 {n_train_ratings} 部）")
+        cu, ci = st.columns(2)
+        with cu:
+            st.markdown(f"**User-CF** · 找相似的人")
+            _rec_cards(rec_u.head(5), model, meta)
+        with ci:
+            st.markdown(f"**Item-CF** · 找相似的片")
+            _rec_cards(rec_i.head(5), model, meta)
+        st.caption(
+            "两边各展示前 5 名。徽标是推荐分（排序依据），小字里的“预测”是评分预测；"
+            "同一部片在两个列表里的名次往往不同——这正是“找相似的人”和“找相似的片”的差别。"
         )
 
+        section("逐条差异", "同一部电影在两个列表里的位置")
+        dict_u = {int(r["item_idx"]): r for _, r in rec_u.iterrows()}
+        dict_i = {int(r["item_idx"]): r for _, r in rec_i.iterrows()}
+        rows = []
+        for x in union:
+            mid = int(model.train.item_ids[x])
+            ru_, ri_ = _rank_of(rec_u, x), _rank_of(rec_i, x)
+            rows.append({
+                "电影": meta[mid]["title"],
+                "User-CF 排名": "—" if ru_ is None else str(ru_),
+                "Item-CF 排名": "—" if ri_ is None else str(ri_),
+                "User-CF 推荐分": f"{dict_u[x]['rank_score']:.3f}" if x in dict_u else "—",
+                "Item-CF 推荐分": f"{dict_i[x]['rank_score']:.3f}" if x in dict_i else "—",
+                "User-CF 预测": f"{dict_u[x]['pred']:.2f}" if x in dict_u else "—",
+                "Item-CF 预测": f"{dict_i[x]['pred']:.2f}" if x in dict_i else "—",
+            })
+        cmp_df = pd.DataFrame(rows)
+        st.dataframe(cmp_df, hide_index=True, use_container_width=True)
+        st.caption(
+            "“—”表示这部片没有进入该算法的 Top-N。排名差得越多，说明两种“相似”的定义在这部片上分歧越大。"
+        )
+
+        section("同一部电影，两种解释", "两边都用各自的邻居拆解")
+        opt = [
+            f"{meta[int(model.train.item_ids[int(x)])]['title']}"
+            f"（User-CF #{_rank_of(rec_u, x) or '—'} / Item-CF #{_rank_of(rec_i, x) or '—'}）"
+            for x in union
+        ]
+        pick = st.selectbox("选择一部电影", opt, index=0, key="rec_cmp_pick")
+        item_idx = int(union[opt.index(pick)])
+        e1, e2 = st.columns(2)
+        with e1:
+            _explain_block(model, meta, u_idx, item_idx, ALGO_USER, K,
+                           heading="User-CF：哪些相似用户影响了它", show_chart=False)
+        with e2:
+            _explain_block(model, meta, u_idx, item_idx, ALGO_ITEM, K,
+                           heading="Item-CF：哪些相似电影影响了它", show_chart=False)
+
+        with st.expander("为什么两个列表差异这么大？", expanded=False):
+            st.markdown(
+                "- User-CF 只参考**和你相似的人**给这部片的分数，所以结果集中在“同类人群都爱看”的电影；\n"
+                "- Item-CF 只参考**你看过的电影**与目标的相似度，所以结果更贴近你已有的观看轨迹；\n"
+                "- 两者都不使用类型标签，重合度高低本身就是一个可以讨论的观察点："
+                "重合越多说明“人群共识”和“个人轨迹”越一致。"
+            )
+
+    else:  # 同一部电影，两种解释
+        section("挑一部你还没看过的电影", "两种算法分别解释为什么推荐它")
+        cand = np.flatnonzero(~model.M[u_idx])
+        cand_items = [int(model.train.item_ids[i]) for i in cand]
+        default_id = int(model.train.item_ids[int(rec_main.iloc[0]["item_idx"])])
+        mid = st.selectbox(
+            "电影", cand_items, index=cand_items.index(default_id),
+            format_func=lambda x: meta[x]["title"],
+            key="rec_same_movie",
+        )
+        item_idx = int(np.where(model.train.item_ids == mid)[0][0])
+        ru = _rank_of(rec_u, item_idx)
+        ri = _rank_of(rec_i, item_idx)
+        st.caption(f"在 User-CF 的 Top-{topn} 里排 #{ru or '—'}，在 Item-CF 的 Top-{topn} 里排 #{ri or '—'}。")
+        e1, e2 = st.columns(2)
+        with e1:
+            _explain_block(model, meta, u_idx, item_idx, ALGO_USER, K,
+                           heading="User-CF：找相似的人", show_chart=True)
+        with e2:
+            _explain_block(model, meta, u_idx, item_idx, ALGO_ITEM, K,
+                           heading="Item-CF：找相似的片", show_chart=True)
 
 # --------------------------------------------------------------------- 页面：实验结果
 def page_results():
     hero(
         "实验结果",
-        "e1 · e2 · e3",
+        "e1 · e2 · e3 · e4",
         "全部指标由 scripts/run_experiments.py 在官方五折上真实跑出，页面只读取 results/*.csv。"
         "图表不写死结论，只标注怎么读。",
     )
@@ -476,12 +643,16 @@ def page_results():
     s1 = read_results("e1_summary.csv")
     e2 = read_results("e2_k_sensitivity.csv")
     e3 = read_results("e3_sparsity.csv")
+    e4 = read_results("e4_summary.csv")
+    e4_fold = read_results("e4_fold_results.csv")
 
     if e1 is None:
         note("还没有实验输出。请在项目根目录运行：<code>python scripts/run_experiments.py</code>", warn=True)
         return
 
-    tab1, tab2, tab3 = st.tabs(["E1 五折算法比较", "E2 邻居数 K", "E3 训练记录减少"])
+    tab1, tab2, tab3, tab4 = st.tabs(
+        ["E1 五折算法比较", "E2 邻居数 K", "E3 训练记录减少", "E4 Top-10 推荐质量"]
+    )
 
     with tab1:
         idx = s1.set_index("algorithm")
@@ -507,19 +678,28 @@ def page_results():
             st.plotly_chart(dark(fig, 320), use_container_width=True)
         with c2:
             fig = go.Figure()
-            for a, color in zip(order, ["#94a3b8", ACCENT, "#f59e0b"]):
+            cf_order = ["user", "item"]
+            for a, color in zip(cf_order, [ACCENT, "#f59e0b"]):
                 fig.add_trace(go.Bar(name=names[a], x=[names[a]], y=[idx.loc[a, "coverage_mean"] * 100],
                                      marker_color=color, text=[f"{idx.loc[a, 'coverage_mean']*100:.2f}%"],
                                      textposition="outside"))
-            fig.update_layout(showlegend=False, title="预测覆盖率（有 ≥1 个有效邻居的测试评分占比）",
+            fig.update_layout(showlegend=False,
+                              title="CF 有效邻居覆盖率（仅对 CF 定义）",
                               yaxis_title="%", yaxis_range=[0, 108])
             st.plotly_chart(dark(fig, 320), use_container_width=True)
-        st.caption("基准模型覆盖率恒为 100%：它不需要邻居，只用用户均值。")
+        st.caption(
+            "覆盖率 = 测试评分中「至少用到一个正相似邻居完成预测」的比例（= 1 − 回退率），只对 CF 有意义；"
+            "用户均值基准不需要邻居，因此不参与这项比较，也不应把它的 100% 拿来当上限。"
+        )
 
         section("逐折明细", "5 个官方 fold")
         show = e1[["fold", "algorithm", "mae", "rmse", "coverage", "fallback_rate", "mean_neighbors",
                    "build_seconds", "predict_seconds"]].copy()
         show["algorithm"] = show["algorithm"].map(names)
+        show["coverage"] = show["coverage"].fillna(-1).map(
+            lambda v: "不适用" if v == -1 else f"{v*100:.2f}%"
+        )
+        show["fallback_rate"] = (show["fallback_rate"] * 100).map(lambda v: f"{v:.2f}%")
         st.dataframe(show, hide_index=True, use_container_width=True)
 
         # 依据实测数据生成的结论（不是写死的说法）
@@ -621,15 +801,98 @@ def page_results():
             )
             st.dataframe(e3, hide_index=True, use_container_width=True)
 
+    with tab4:
+        if e4 is None:
+            note("E4 结果缺失，请运行 <code>python scripts/run_experiments.py --only e4</code>", warn=True)
+        else:
+            idx4 = e4.set_index("algorithm")
+            names4 = {"popular": "热门推荐", "user": "User-CF", "item": "Item-CF"}
+            colors4 = {"popular": "#94a3b8", "user": ACCENT, "item": "#f59e0b"}
+            order4 = ["popular", "user", "item"]
+            kpi_row([
+                (names4[a], f"Recall@10 {idx4.loc[a, 'recall_mean']:.4f}",
+                 f"NDCG {idx4.loc[a, 'ndcg_mean']:.4f}　Hit {idx4.loc[a, 'hitrate_mean']:.4f}")
+                for a in order4
+            ])
+
+            c1, c2 = st.columns([1.5, 1])
+            with c1:
+                fig = go.Figure()
+                for m, label in [("recall_mean", "Recall@10"), ("ndcg_mean", "NDCG@10"),
+                                 ("hitrate_mean", "HitRate@10")]:
+                    fig.add_trace(go.Bar(
+                        name=label, x=[names4[a] for a in order4],
+                        y=[idx4.loc[a, m] for a in order4],
+                        marker_color=[colors4[a] for a in order4], showlegend=(m == "recall_mean"),
+                    ))
+                fig.update_layout(barmode="group", title="Top-10 推荐质量（按用户平均，5 折均值）")
+                st.plotly_chart(dark(fig, 330), use_container_width=True)
+            with c2:
+                fig = go.Figure(go.Bar(
+                    x=[names4[a] for a in order4],
+                    y=[idx4.loc[a, "item_coverage_mean"] * 100 for a in order4],
+                    marker_color=[colors4[a] for a in order4],
+                    text=[f"{idx4.loc[a, 'item_coverage_mean']*100:.1f}%" for a in order4],
+                    textposition="outside",
+                ))
+                fig.update_layout(showlegend=False, title="推荐物品覆盖率（触及目录的比例）",
+                                  yaxis_title="%", yaxis_range=[0, max(
+                                      idx4["item_coverage_mean"].max() * 100 * 1.3, 5)])
+                st.plotly_chart(dark(fig, 330), use_container_width=True)
+
+            best_recall = idx4["recall_mean"].idxmax()
+            best_ndcg = idx4["ndcg_mean"].idxmax()
+            st.markdown(
+                f"- 相关定义：测试集中评分 **≥4** 的电影；候选集：**全部未在训练集出现的电影**（三个模型完全一致）；"
+                f"截断 N=10。\n"
+                f"- Recall@10 最高的是 **{names4[best_recall]}**（{idx4.loc[best_recall, 'recall_mean']:.4f}），"
+                f"NDCG@10 最高的是 **{names4[best_ndcg]}**（{idx4.loc[best_ndcg, 'ndcg_mean']:.4f}）。"
+                f"数值本身很小是正常的：每个用户的测试正例只有十几部片，10 个推荐位能覆盖的比例天然有限。\n"
+                f"- 热门推荐只推了 **{idx4.loc['popular', 'n_distinct_items_mean']:.0f}** 部不同的电影"
+                f"（覆盖 {idx4.loc['popular', 'item_coverage_mean']*100:.1f}% 目录），"
+                f"Item-CF 推了 **{idx4.loc['item', 'n_distinct_items_mean']:.0f}** 部"
+                f"（{idx4.loc['item', 'item_coverage_mean']*100:.1f}%）：命中率接近，但热门推荐的多样性几乎为零。\n"
+                f"- 每折有约 {float(e4['users_no_test'].mean()):.0f} 名用户在该折测试集里没有任何评分，"
+                f"另有 {float(e4['users_no_positive'].mean()):.0f} 名用户有测试评分但没有 ≥4 分的电影——"
+                f"后者无法计算 Recall（分母为 0），两者都不进入均值。"
+            )
+
+            section("逐折明细", "5 个官方 fold")
+            if e4_fold is not None:
+                show4 = e4_fold[["fold", "algorithm", "users_evaluated", "users_no_test",
+                                 "users_no_positive", "recall_mean", "ndcg_mean", "hitrate_mean",
+                                 "item_coverage"]].copy()
+                show4["algorithm"] = show4["algorithm"].map(names4)
+                st.dataframe(show4, hide_index=True, use_container_width=True)
+
+            note(
+                "<b>这个指标不能直接当“推荐好不好”看</b>：只把测试集里评过 ≥4 分的电影当作相关，"
+                "没出现过的电影既不知道是否喜欢、也不能算负反馈；而且测试评分只覆盖每折的一部分用户。"
+                "它衡量的是“能不能在 10 个位置里捞到已知的好片”，不是平台点击率或用户满意度。"
+            )
+
+            with st.expander("为什么用加权和排序，而不是加权平均？", expanded=False):
+                st.markdown(
+                    "一开始用预测分（加权平均）排序时，Item-CF 的 HitRate@10 只有 0.03："
+                    "因为加权平均要除以 Σ|sim|，只有 1 个弱邻居、恰好打了 5 分的冷门片会被归一化成 5.00，"
+                    "从而挤掉“有 20 个邻居都打 4.5 分”的电影。改用加权和（Σ sim·偏差）后，"
+                    "证据越多的条目分数越高，两种 CF 的 HitRate@10 都回到 0.78 左右。"
+                    "这也是评分预测（E1 用加权平均）与 Top-N 推荐（E4 用加权和）必须分开评价的原因。"
+                )
+
     section("原始文件", "可直接放进报告 / PPT")
-    cols = st.columns(4)
-    for col, (name, path) in zip(cols, [
+    files = [
         ("E1 逐折", "e1_fold_results.csv"), ("E1 汇总", "e1_summary.csv"),
         ("E2 K 敏感性", "e2_k_sensitivity.csv"), ("E3 稀疏性", "e3_sparsity.csv"),
-    ]):
-        p = RESULTS / path
-        if p.exists():
-            col.download_button(path, p.read_bytes(), file_name=path, use_container_width=True)
+        ("E4 汇总", "e4_summary.csv"), ("E4 逐用户", "e4_per_user.csv"),
+    ]
+    for i in range(0, len(files), 3):
+        cols = st.columns(3)
+        for col, (label, path) in zip(cols, files[i:i + 3]):
+            p = RESULTS / path
+            if p.exists():
+                col.download_button(f"{label}（{path}）", p.read_bytes(), file_name=path,
+                                    use_container_width=True, key=f"dl_{path}")
 
     figs = sorted((RESULTS / "figures").glob("*.png"))
     if figs:
@@ -687,7 +950,11 @@ def page_concept():
             "每个用户和每部电影都变成一个 k 维向量。**共现过的用户和电影，向量会被拉近**——"
             "这其实就是 CF 里“相似”的连续版本，只是相似度不再来自某几个人，而是来自所有交互共同训练出的几何关系。"
         )
-        st.caption("优点：能泛化到邻居为空的用户/物品；缺点：内积仍是线性交互，表达能力有限。")
+        st.caption(
+            "优点：能为「邻居不足」的用户/物品给出预测（不必先找到相似邻居）；"
+            "缺点：内积仍是线性交互，而且**完全冷启动**（0 条交互的新用户/新物品）依然无解，"
+            "需要内容特征或引导行为才能处理。"
+        )
 
     with c2:
         section("NCF 在做什么", "")
@@ -700,15 +967,70 @@ def page_concept():
         )
         st.caption("NeuMF 再用一路 GMF 内积与 MLP 并联，兼顾线性与非线性。")
 
-    section("为什么本实验只做传统 CF", "")
+    section("扩展实验：Bias-MF 实测对照", "同一五折 · 同一评分预测任务 · 同一指标")
+    mf_summary = read_results("mf_summary.csv")
+    e1s = read_results("e1_summary.csv")
+    if mf_summary is None or e1s is None:
+        note("运行 <code>python scripts/run_experiments.py --only mf</code> 后，这里会显示实测对照。", warn=True)
+    else:
+        e1_idx = e1s.set_index("algorithm")
+        m = mf_summary.iloc[0]
+        rows = [
+            {"模型": "用户均值基准", "MAE": f"{e1_idx.loc['baseline','mae_mean']:.4f} ± {e1_idx.loc['baseline','mae_std']:.4f}",
+             "RMSE": f"{e1_idx.loc['baseline','rmse_mean']:.4f} ± {e1_idx.loc['baseline','rmse_std']:.4f}",
+             "做法": "只预测该用户的训练均值"},
+            {"模型": "User-CF", "MAE": f"{e1_idx.loc['user','mae_mean']:.4f} ± {e1_idx.loc['user','mae_std']:.4f}",
+             "RMSE": f"{e1_idx.loc['user','rmse_mean']:.4f} ± {e1_idx.loc['user','rmse_std']:.4f}",
+             "做法": "相似用户的加权偏差"},
+            {"模型": "Item-CF", "MAE": f"{e1_idx.loc['item','mae_mean']:.4f} ± {e1_idx.loc['item','mae_std']:.4f}",
+             "RMSE": f"{e1_idx.loc['item','rmse_mean']:.4f} ± {e1_idx.loc['item','rmse_std']:.4f}",
+             "做法": "相似电影的加权偏差"},
+            {"模型": "Bias-MF（扩展）", "MAE": f"{m['mae_mean']:.4f} ± {m['mae_std']:.4f}",
+             "RMSE": f"{m['rmse_mean']:.4f} ± {m['rmse_std']:.4f}",
+             "做法": f"μ+b_u+b_i+p_u·q_i，ALS 求解（k={int(m['k'])}，{int(m['iterations'])} 轮）"},
+        ]
+        st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
+
+        mf_vals = [e1_idx.loc["baseline", "rmse_mean"], e1_idx.loc["user", "rmse_mean"],
+                   e1_idx.loc["item", "rmse_mean"], float(m["rmse_mean"])]
+        mf_errs = [e1_idx.loc["baseline", "rmse_std"], e1_idx.loc["user", "rmse_std"],
+                   e1_idx.loc["item", "rmse_std"], float(m["rmse_std"])]
+        fig = go.Figure(go.Bar(
+            x=["均值基准", "User-CF", "Item-CF", "Bias-MF"],
+            y=mf_vals,
+            error_y=dict(type="data", array=mf_errs, visible=True),
+            marker_color=["#94a3b8", ACCENT, "#f59e0b", "#a855f7"],
+            width=0.55,
+        ))
+        for label, v, e in zip(["均值基准", "User-CF", "Item-CF", "Bias-MF"], mf_vals, mf_errs):
+            fig.add_annotation(x=label, y=v + e + 0.012, text=f"{v:.4f}", showarrow=False,
+                               font=dict(size=11, color="#cbd6ea"))
+        fig.update_layout(showlegend=False, title="五折 RMSE 对照（越低越好，误差棒为折间标准差）",
+                          yaxis_range=[min(mf_vals) - 0.1, max(mf_vals) + 0.09])
+        st.plotly_chart(dark(fig, 330), use_container_width=True)
+
+        lower = "Bias-MF" if float(m["rmse_mean"]) < e1_idx["rmse_mean"].drop("baseline").min() else "传统 CF"
+        st.markdown(
+            f"- 实测结果：Bias-MF 的 RMSE 为 **{m['rmse_mean']:.4f}**，"
+            f"User-CF {e1_idx.loc['user','rmse_mean']:.4f}、Item-CF {e1_idx.loc['item','rmse_mean']:.4f}、"
+            f"均值基准 {e1_idx.loc['baseline','rmse_mean']:.4f}。这次 **{lower}** 更低。\n"
+            f"- 训练成本完全不同：CF 建相似度只要几十毫秒；Bias-MF 平均每折训练 "
+            f"{m['train_seconds_mean']:.1f} s（纯 CPU 的 ALS 迭代），还要调 k 与正则项。\n"
+            "- 它**不参与**推荐页演示：矩阵分解很难回答“为什么是这几个人影响了预测”，"
+            "而本课程的重点正是把这一步摊开。\n"
+            "- 这是同一划分下的实测对照，可以放心引用；但它只覆盖评分预测任务，"
+            "**没有做 Top-N 评测，也没有训练 NCF**，所以不能据此说“深度学习更好”。"
+        )
+
+    section("为什么主线只做传统 CF", "")
     st.markdown(
         "- 课程要求是讲清 User-CF / Item-CF 的基本思想，并在小数据集上跑通 Demo；"
         "传统 CF 的每一步都能摊开给人看。\n"
         "- 10 万条评分、943 用户的数据量下，CF 在 CPU 上几秒钟就能跑完五折，适合课堂现场运行。\n"
-        "- 深度学习模型在这个数据规模上的收益很小且不稳定，且需要 GPU/调参预算；"
-        "**在没有实测对照的情况下，不应声称 NCF 优于 CF**。\n"
-        "- 若后续要做扩展实验，必须在同一划分（官方五折）、同一任务（评分预测）、同一指标（MAE/RMSE）下比较，"
-        "并把 NCF 明确定位为“扩展实验”。"
+        "- 上面的 Bias-MF 已经在**同一划分、同一任务、同一指标**下做过实测，所以那一行可以引用；"
+        "**但 NCF 没有做，因此不对 NCF 与 CF 的优劣下任何结论**。\n"
+        "- 若继续扩展（NCF 等），也必须沿用官方五折、评分预测任务与 MAE/RMSE 指标，并明确标注为扩展实验——"
+        "不要在推荐页那一侧悄悄换模型，否则前面的可解释性就白做了。"
     )
 
     section("选型速查", "")
@@ -716,7 +1038,8 @@ def page_concept():
         ["要解释“为什么推荐”", "User-CF（可指到具体的人）", "Item-CF（可指到具体的片）"],
         ["用户很少、物品很多", "邻居不足，覆盖率低", "通常更稳"],
         ["物品更新频繁", "影响较小", "需重算物品相似度"],
-        ["冷启动用户", "无法推荐（无邻居）", "可用少量已看片推断"],
+        ["完全没有评分的新用户", "无法推荐（找不到邻居）", "无法推荐（没有已评分的片）"],
+        ["只有零星几条评分", "邻居可能不足", "通常还能工作"],
         ["本质局限", "只利用共现，不利用内容", "同左，且同质化倾向更强"],
     ], columns=["场景", "User-CF", "Item-CF"]), hide_index=True, use_container_width=True)
 

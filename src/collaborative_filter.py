@@ -31,15 +31,24 @@ ALGO_BASELINE = "baseline"
 
 @dataclass
 class PredictionResult:
-    """批量预测结果，附带解释所需的中间量统计。"""
+    """批量预测结果，附带解释所需的中间量统计。
+
+    覆盖率（coverage）的定义统一为：
+        测试评分中「至少使用了 1 个正相似邻居完成预测」的比例 = 1 - 回退率。
+    它只对协同过滤有意义：用户均值基准不需要邻居，因此 ``coverage_applicable=False``，
+    其 coverage 返回 NaN，不能与 CF 的覆盖率放在一起比大小。
+    """
 
     preds: np.ndarray
     n_neighbors: np.ndarray
     is_fallback: np.ndarray
+    coverage_applicable: bool = True
 
     @property
     def coverage(self) -> float:
-        return float(1.0 - self.is_fallback.mean()) if len(self.preds) else 0.0
+        if not self.coverage_applicable or len(self.preds) == 0:
+            return float("nan")
+        return float(1.0 - self.is_fallback.mean())
 
 
 @dataclass
@@ -55,6 +64,7 @@ class Explanation:
     is_fallback: bool
     neighbors: pd.DataFrame = field(default_factory=pd.DataFrame)
     formula: str = ""
+    rank_score: float = 0.0          # 分子 Σ sim·偏差 = Top-N 排序分
 
 
 class CFModel:
@@ -152,14 +162,17 @@ class CFModel:
             u = int(pairs[group[0], 0])
             items = pairs[group, 1]
             if algo == ALGO_USER:
-                p, k, fb = self._predict_user_group(u, items, sim, K)
+                p, k, fb, _ = self._predict_user_group(u, items, sim, K)
             else:
-                p, k, fb = self._predict_item_group(u, items, sim, K)
+                p, k, fb, _ = self._predict_item_group(u, items, sim, K)
             preds[group], n_nbr[group], fallback[group] = p, k, fb
         return PredictionResult(preds=np.clip(preds, 1.0, 5.0), n_neighbors=n_nbr, is_fallback=fallback)
 
     def predict_baseline(self, pairs: np.ndarray) -> PredictionResult:
-        """用户均值基准：pred = mean(u)，无评分用户回退全局均值。"""
+        """用户均值基准：pred = mean(u)，无评分用户回退全局均值。
+
+        该模型不使用邻居，因此覆盖率不适用（返回 NaN），只用于 MAE/RMSE 对照。
+        """
         pairs = np.asarray(pairs, dtype=np.int64).reshape(-1, 2)
         users = pairs[:, 0]
         has = self.M.sum(axis=1) > 0
@@ -167,7 +180,7 @@ class CFModel:
         fallback = ~has[users]
         return PredictionResult(
             preds=np.clip(preds, 1.0, 5.0), n_neighbors=np.zeros(len(pairs), dtype=np.int32),
-            is_fallback=fallback,
+            is_fallback=fallback, coverage_applicable=False,
         )
 
     def _user_neighbor_order(self, u: int, sim: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -180,10 +193,16 @@ class CFModel:
         return nbrs, row[nbrs]
 
     def _predict_user_group(self, u: int, items: np.ndarray, sim: np.ndarray, K: int):
+        """返回 (预测分, 邻居数, 是否回退, 加权和)。
+
+        加权和（num）是 Top-N 排序分数：Σ sim·(r-mean)，不除以 Σ|sim|。
+        预测分 = mean(u) + num/Σ|sim|，用于评分预测（E1）。
+        """
         nbrs, w = self._user_neighbor_order(u, sim)
         if nbrs.size == 0:
             base = self.mu[u] if self.M[u].any() else self.global_mean
-            return np.full(len(items), base), np.zeros(len(items), np.int32), np.ones(len(items), bool)
+            zeros = np.zeros(len(items), dtype=np.int32)
+            return np.full(len(items), base), zeros, np.ones(len(items), bool), np.zeros(len(items))
 
         sub = self.X[np.ix_(nbrs, items)]                    # (邻居数, 目标电影数)
         valid = sub > 0
@@ -196,13 +215,15 @@ class CFModel:
         base = self.mu[u] if self.M[u].any() else self.global_mean
         preds = np.full(len(items), base, dtype=np.float64)
         preds[ok] = base + num[ok] / den[ok]
-        return preds, keep.sum(axis=0).astype(np.int32), ~ok
+        return preds, keep.sum(axis=0).astype(np.int32), ~ok, num
 
     def _predict_item_group(self, u: int, items: np.ndarray, sim: np.ndarray, K: int):
+        """返回 (预测分, 邻居数, 是否回退, 加权和)，语义同上。"""
         cand = np.flatnonzero(self.M[u])                      # 该用户训练集评过的物品
         base = self.mu[u] if cand.size else self.global_mean
         if cand.size == 0:
-            return np.full(len(items), base), np.zeros(len(items), np.int32), np.ones(len(items), bool)
+            zeros = np.zeros(len(items), dtype=np.int32)
+            return np.full(len(items), base), zeros, np.ones(len(items), bool), np.zeros(len(items))
 
         sub = sim[np.ix_(items, cand)]                        # (目标电影数, 候选相似电影数)，对角线已置 0
         delta = (self.X[u, cand] - base).astype(np.float32)   # 目标用户对相似电影的“超均值”部分
@@ -217,7 +238,7 @@ class CFModel:
         ok = den > 0
         preds = np.full(len(items), base, dtype=np.float64)
         preds[ok] = base + num[ok] / den[ok]
-        return preds, valid.sum(axis=1).astype(np.int32), ~ok
+        return preds, valid.sum(axis=1).astype(np.int32), ~ok, num
 
     # ------------------------------------------------------------------ 解释
     def explain(self, user_idx: int, item_idx: int, algo: str, K: int = 30) -> Explanation:
@@ -254,6 +275,7 @@ class CFModel:
                 algo=algo, base=base, pred=float(np.clip(base + contrib.sum() / den, 1, 5)),
                 sim_sum=float(den), is_fallback=False, neighbors=table,
                 formula="pred = mean(u) + Σ sim(u,v)·(r(v,i)-mean(v)) / Σ|sim(u,v)|",
+                rank_score=float(contrib.sum()),
             )
 
         cand = np.flatnonzero(self.M[user_idx])
@@ -295,34 +317,45 @@ class CFModel:
             algo=algo, base=base, pred=float(np.clip(base + sims.dot(centered) / den, 1, 5)),
             sim_sum=float(den), is_fallback=False, neighbors=table,
             formula="pred = mean(u) + Σ sim(i,j)·(r(u,j)-mean(u)) / Σ|sim(i,j)|",
+            rank_score=float(sims.dot(centered)),
         )
 
     # ------------------------------------------------------------------ 推荐
     def recommend(
         self, user_idx: int, algo: str, K: int = 30, n: int = 10, candidate_idx: np.ndarray | None = None
     ) -> pd.DataFrame:
-        """对全目录（默认排除训练集已评分电影）生成 Top-N，并标注是否走过回退。"""
+        """对全目录（默认排除训练集已评分电影）生成 Top-N。
+
+        排序用的是**相似度加权和**（Σ sim·偏差，即预测公式的分子），不是加权平均后的预测分。
+        原因：加权平均会把“只有 1 个弱邻居、恰好打了 5 分”的冷门片归一化到 5.0，
+        从而挤掉“有 20 个邻居都打了 4.5 分”的电影；加权和则天然偏好证据更多的条目。
+        这也是评分预测任务（E1）与 Top-N 推荐任务（E4）必须分开评价的直接原因。
+
+        返回列：item_idx / rank_score（排序分）/ pred（预测评分）/ n_neighbors / is_fallback
+        """
         sim = self.ensure_similarity(algo)
         if candidate_idx is None:
             candidate_idx = np.flatnonzero(~self.M[user_idx])
         else:
             candidate_idx = np.asarray(candidate_idx, dtype=np.int64)
         if candidate_idx.size == 0:
-            return pd.DataFrame(columns=["item_idx", "score", "n_neighbors", "is_fallback"])
+            return pd.DataFrame(columns=["item_idx", "rank_score", "pred", "n_neighbors", "is_fallback"])
 
         if algo == ALGO_USER:
-            preds, k, fb = self._predict_user_group(user_idx, candidate_idx, sim, K)
+            preds, k, fb, rank_score = self._predict_user_group(user_idx, candidate_idx, sim, K)
         else:
-            preds, k, fb = self._predict_item_group(user_idx, candidate_idx, sim, K)
+            preds, k, fb, rank_score = self._predict_item_group(user_idx, candidate_idx, sim, K)
 
         df = pd.DataFrame({
             "item_idx": candidate_idx,
-            "score": np.clip(preds, 1.0, 5.0),
+            "rank_score": rank_score,
+            "pred": np.clip(preds, 1.0, 5.0),
             "n_neighbors": k,
             "is_fallback": fb,
         })
         # 有真实邻居支撑的推荐优先；同分时邻居越多越靠前
-        df = df.sort_values(["is_fallback", "score", "n_neighbors", "item_idx"], ascending=[True, False, False, True])
+        df = df.sort_values(["is_fallback", "rank_score", "n_neighbors", "item_idx"],
+                            ascending=[True, False, False, True])
         return df.head(n).reset_index(drop=True)
 
     def neighbor_stats(self, user_idx: int, algo: str, item_idx: int | None = None) -> dict:

@@ -102,11 +102,12 @@ table.matrix td.missing { color: #4d5f7d; background: #101a2e; }
 table.matrix td.hl-row { background: rgba(59,167,255,0.30); color: #ffffff; font-weight: 600; }
 table.matrix td.hl-col { background: rgba(124,92,255,0.26); }
 table.matrix td.hl-cell { background: #3ba7ff; color: #04141f; font-weight: 800; font-size: 0.95rem; }
+table.matrix td.hl-cell.is-hidden { outline: 2px dashed #fbbf24; outline-offset: -2px; }
 table.matrix th.hl-name { color: #7fd0ff; font-weight: 700; }
 
 /* ---------- 步骤条 ---------- */
-.stepbar { display: flex; gap: 8px; margin: 6px 0 16px; flex-wrap: wrap; }
-.stepbar .dot { width: 100%; height: 4px; border-radius: 4px; background: rgba(255,255,255,0.10); }
+.stepbar { display: flex; gap: 8px; margin: 6px 0 16px; flex-wrap: nowrap; }
+.stepbar .dot { flex: 1 1 0; height: 4px; border-radius: 4px; background: rgba(255,255,255,0.10); }
 .stepbar .dot.on { background: linear-gradient(90deg, #3ba7ff, #7c5cff); }
 
 /* ---------- 说明块 ---------- */
@@ -189,8 +190,11 @@ def movie_card(
     )
 
 
-def matrix_table(df: pd.DataFrame, user: int, item: int) -> str:
-    """评分矩阵：高亮目标用户所在行、目标电影所在列，目标格子显示 ?。"""
+def matrix_table(df: pd.DataFrame, user: int, item: int, hidden: bool = False) -> str:
+    """评分矩阵：高亮目标用户所在行、目标电影所在列，目标格子显示 ?。
+
+    ``hidden=True`` 表示该格原本有评分、但为了演示被临时隐藏（用虚线圈标出）。
+    """
     cols = list(df.columns)
     head = "".join(
         f'<th class="{"hl" if j == item else ""}">{c}</th>' for j, c in enumerate(cols)
@@ -207,6 +211,8 @@ def matrix_table(df: pd.DataFrame, user: int, item: int) -> str:
                 cls.append("hl-col")
             if u == user and j == item:
                 cls.append("hl-cell")
+                if hidden:
+                    cls.append("is-hidden")
                 txt = "?"
             elif pd.isna(v):
                 cls.append("missing")

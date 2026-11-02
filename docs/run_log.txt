@@ -7,11 +7,11 @@ $ python scripts/run_experiments.py
   fold 4 完成：baseline RMSE=1.0367, user RMSE=0.9319, item RMSE=0.9356
   fold 5 完成：baseline RMSE=1.0393, user RMSE=0.9329, item RMSE=0.9411
 
-E1 用时 4.0s
+E1 用时 3.5s
 algorithm  mae_mean  mae_std  rmse_mean  rmse_std  coverage_mean  coverage_std  fallback_rate_mean  build_seconds_mean  predict_seconds_mean
- baseline    0.8362   0.0090     1.0437    0.0119         1.0000        0.0000              0.0000              0.0000                0.0010
-     item    0.7332   0.0089     0.9415    0.0112         0.9919        0.0012              0.0082              0.0496                0.1212
-     user    0.7295   0.0048     0.9370    0.0061         0.9971        0.0002              0.0029              0.0272                0.1844
+ baseline    0.8362   0.0090     1.0437    0.0119            NaN           NaN              0.0000              0.0000                0.0010
+     item    0.7332   0.0089     0.9415    0.0112         0.9919        0.0012              0.0082              0.0456                0.1158
+     user    0.7295   0.0048     0.9370    0.0061         0.9971        0.0002              0.0029              0.0234                0.1510
 
 == E2 邻居数 K 的影响（固定 u1）==
   K=5 完成
@@ -19,24 +19,24 @@ algorithm  mae_mean  mae_std  rmse_mean  rmse_std  coverage_mean  coverage_std  
   K=20 完成
   K=30 完成
   K=50 完成
-E2 用时 1.6s
+E2 用时 1.5s
  fold algorithm  K    mae   rmse  coverage  fallback_count  mean_neighbors  predict_seconds
-    1      user  5 0.7659 0.9867    0.9969              63            4.94            0.137
-    1      item  5 0.7622 0.9927    0.9918             164            4.93            0.124
-    1      user 10 0.7439 0.9567    0.9969              63            9.75            0.129
-    1      item 10 0.7500 0.9681    0.9918             164            9.67            0.088
-    1      user 20 0.7377 0.9477    0.9969              63           18.93            0.119
-    1      item 20 0.7477 0.9620    0.9918             164           18.38            0.093
-    1      user 30 0.7375 0.9472    0.9969              63           27.46            0.125
-    1      item 30 0.7475 0.9604    0.9918             164           26.03            0.090
-    1      user 50 0.7387 0.9480    0.9969              63           42.39            0.121
-    1      item 50 0.7497 0.9614    0.9918             164           38.15            0.095
+    1      user  5 0.7659 0.9867    0.9969              63            4.94            0.115
+    1      item  5 0.7622 0.9927    0.9918             164            4.93            0.083
+    1      user 10 0.7439 0.9567    0.9969              63            9.75            0.112
+    1      item 10 0.7500 0.9681    0.9918             164            9.67            0.082
+    1      user 20 0.7377 0.9477    0.9969              63           18.93            0.112
+    1      item 20 0.7477 0.9620    0.9918             164           18.38            0.084
+    1      user 30 0.7375 0.9472    0.9969              63           27.46            0.124
+    1      item 30 0.7475 0.9604    0.9918             164           26.03            0.087
+    1      user 50 0.7387 0.9480    0.9969              63           42.39            0.114
+    1      item 50 0.7497 0.9614    0.9918             164           38.15            0.089
 
 == E3 训练记录减少的模拟实验（固定 u1）==
   保留比例 100%（实际 100.0%，80000 条）完成
   保留比例 50%（实际 50.0%，39993 条）完成
   保留比例 25%（实际 25.0%，19993 条）完成
-E3 用时 1.2s
+E3 用时 1.1s
  fold  target_ratio  actual_ratio  train_rows algorithm  K    mae   rmse  coverage  fallback_count  density_pct  users_single_rating
     1          1.00        1.0000       80000      user 30 0.7375 0.9472    0.9969              63        5.044                    0
     1          1.00        1.0000       80000      item 30 0.7475 0.9604    0.9918             164        5.044                    0
@@ -45,33 +45,51 @@ E3 用时 1.2s
     1          0.25        0.2499       19993      user 30 0.8640 1.1145    0.7856            4287        1.260                    1
     1          0.25        0.2499       19993      item 30 0.9025 1.1804    0.7602            4796        1.260                    1
 
-全部完成，总用时 6.9s；结果目录：E:\大学\大三上\机器学习\movie_pre\results
+== E4 Top-10 推荐质量（5 折，候选=全部未评分电影）==
+  fold 1 完成：popular Hit@10=0.7829，user Hit@10=0.7961，item Hit@10=0.7807
+  fold 2 完成：popular Hit@10=0.7531，user Hit@10=0.7189，item Hit@10=0.7283
+  fold 3 完成：popular Hit@10=0.6502，user Hit@10=0.6549，item Hit@10=0.6443
+  fold 4 完成：popular Hit@10=0.6517，user Hit@10=0.6528，item Hit@10=0.6517
+  fold 5 完成：popular Hit@10=0.6036，user Hit@10=0.6606，item Hit@10=0.6310
+E4 用时 71.8s
+algorithm  folds  users_evaluated  users_no_test  users_no_positive  recall_mean  recall_std  ndcg_mean  ndcg_std  hitrate_mean  hitrate_std  precision_mean  item_coverage_mean  item_coverage_std  n_distinct_items_mean
+     item      5            743.4          176.8               22.8       0.1393      0.0097     0.2435    0.0365        0.6872       0.0646          0.1887              0.3228             0.0053                  543.0
+  popular      5            743.4          176.8               22.8       0.1361      0.0111     0.1982    0.0326        0.6883       0.0760          0.1568              0.0403             0.0044                   67.8
+     user      5            743.4          176.8               22.8       0.1417      0.0110     0.2367    0.0371        0.6967       0.0619          0.1796              0.1017             0.0035                  171.0
+
+== 扩展实验：Bias-MF（ALS，同一五折、同一评分预测任务）==
+  fold 1 完成：Bias-MF RMSE=0.9314（训练 3.8s）
+  fold 2 完成：Bias-MF RMSE=0.9228（训练 3.7s）
+  fold 3 完成：Bias-MF RMSE=0.9142（训练 3.6s）
+  fold 4 完成：Bias-MF RMSE=0.9147（训练 3.7s）
+  fold 5 完成：Bias-MF RMSE=0.9177（训练 3.9s）
+MF 用时 20.0s
+algorithm  folds  k  iterations  mae_mean  mae_std  rmse_mean  rmse_std  train_seconds_mean
+       mf      5 30          15    0.7225   0.0062     0.9202    0.0072                3.75
+
+全部完成，总用时 98.0s；结果目录：E:\大学\大三上\机器学习\movie_pre\results
 
 ==============================================
-$ python -m streamlit run app.py --server.port 8502
-
+$ python -m streamlit run app.py   （默认 8501 端口）
 
   You can now view your Streamlit app in your browser.
+  Local URL: http://localhost:8501
+GET http://localhost:8501 -> HTTP 200
 
-  Local URL: http://localhost:8502
-  Network URL: http://192.168.52.252:8502
-  External URL: http://223.104.87.9:8502
+$ python -m pytest tests -q
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+16 passed, 2 warnings in 3.55s
 
-GET http://localhost:8502 -> HTTP 200
-
-# 页面烟测
 $ python tests/test_app_smoke.py
+2026-11-02 23:19:42.270 Serialization of dataframe to Arrow table was unsuccessful due to: ("Could not convert '—' with type str: tried to convert to double", 'Conversion failed for column User-CF 推荐分 with type object'). Applying automatic fixes for column types to make the dataframe Arrow-compatible.
 [OK] 概览           markdown=15 dataframe=1 charts/other=1
 [OK] 原理实验室        markdown=10 dataframe=0 charts/other=0
-[OK] 电影推荐         markdown=37 dataframe=1 charts/other=3
-[OK] 实验结果         markdown=13 dataframe=3 charts/other=6
-[OK] 从 CF 到深度学习   markdown=13 dataframe=1 charts/other=0
+[OK] 电影推荐         markdown=36 dataframe=1 charts/other=3
+[OK] 实验结果         markdown=22 dataframe=4 charts/other=8
+[OK] 从 CF 到深度学习   markdown=15 dataframe=2 charts/other=1
 [OK] 原理实验室：切换 Item-CF / K=1 / 下一步 均无异常
+[OK] 原理实验室：目标电影已评分 → 隐藏该评分并说明原因
 [OK] 电影推荐：切换算法 / K=5 均无异常
+[OK] 电影推荐：随机换用户 1 → 874
+[OK] 电影推荐：对比视图 / 同片双解释 均无异常
 全部页面烟测通过
-
-# 单元测试
-$ python -m pytest tests -q
-
--- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
-10 passed, 2 warnings in 3.25s

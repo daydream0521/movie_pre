@@ -22,16 +22,17 @@ import pandas as pd  # noqa: E402
 
 from src.data import load_catalog  # noqa: E402
 from src.evaluation import (  # noqa: E402
-    FIG_DIR, RESULTS_DIR, experiment_e1, experiment_e2, experiment_e3,
-    fig_e1, fig_e2, fig_e3,
+    FIG_DIR, RESULTS_DIR, experiment_e1, experiment_e2, experiment_e3, experiment_e4,
+    experiment_mf, fig_e1, fig_e2, fig_e3, fig_e4,
 )
 
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--only", choices=["e1", "e2", "e3", "all"], default="all")
+    ap.add_argument("--only", choices=["e1", "e2", "e3", "e4", "mf", "all"], default="all")
     ap.add_argument("--K", type=int, default=30, help="E1/E3 使用的邻居数")
     ap.add_argument("--fold", type=int, default=1, help="E2/E3 固定使用的 fold")
+    ap.add_argument("--n", type=int, default=10, help="E4 的 Top-N 截断")
     args = ap.parse_args()
 
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
@@ -78,6 +79,28 @@ def main() -> int:
         fig_e3(df3)
         print(f"E3 用时 {time.perf_counter()-t:.1f}s")
         print(df3.to_string(index=False))
+
+    if args.only in ("all", "e4"):
+        print("\n== E4 Top-10 推荐质量（5 折，候选=全部未评分电影）==")
+        t = time.perf_counter()
+        per_user, fold_df, summary = experiment_e4(
+            ROOT / "data" / "ml-100k", users, items, K=args.K, n=args.n
+        )
+        per_user.to_csv(RESULTS_DIR / "e4_per_user.csv", index=False, encoding="utf-8-sig")
+        fold_df.to_csv(RESULTS_DIR / "e4_fold_results.csv", index=False, encoding="utf-8-sig")
+        summary.to_csv(RESULTS_DIR / "e4_summary.csv", index=False, encoding="utf-8-sig")
+        fig_e4(summary, n=args.n)
+        print(f"E4 用时 {time.perf_counter()-t:.1f}s")
+        print(summary.to_string(index=False))
+
+    if args.only in ("all", "mf"):
+        print("\n== 扩展实验：Bias-MF（ALS，同一五折、同一评分预测任务）==")
+        t = time.perf_counter()
+        mf_fold, mf_summary = experiment_mf(ROOT / "data" / "ml-100k", users, items)
+        mf_fold.to_csv(RESULTS_DIR / "mf_fold_results.csv", index=False, encoding="utf-8-sig")
+        mf_summary.to_csv(RESULTS_DIR / "mf_summary.csv", index=False, encoding="utf-8-sig")
+        print(f"MF 用时 {time.perf_counter()-t:.1f}s")
+        print(mf_summary.to_string(index=False))
 
     print(f"\n全部完成，总用时 {time.perf_counter()-t_all:.1f}s；结果目录：{RESULTS_DIR}")
     return 0
