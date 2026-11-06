@@ -92,6 +92,9 @@
 
 ## 2. 5 分钟现场 Demo 操作脚本
 
+> 只想讲 90 秒、只走三步？用 **`docs/demo_script.md`** 的脚本（默认页就是三步演示）。
+> 下面这份 5 分钟版本会依次打开原理实验室、电影推荐、实验结果，适合有充足时间的完整讲解。
+
 **准备**：终端已运行 `python -m streamlit run app.py`，浏览器停在 `http://localhost:8501`。第二 Tab 预先打开 `?page=lab`，第三 Tab 打开 `?page=results`。
 
 | 时间 | 页面 | 操作 | 要说的一句 |

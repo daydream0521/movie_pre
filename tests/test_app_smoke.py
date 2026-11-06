@@ -1,7 +1,6 @@
-"""用 Streamlit 官方 AppTest 无头跑通每个页面，确认没有异常、关键元素存在。
+"""用 Streamlit 官方 AppTest 无头跑通课堂演示与完整实验，确认没有异常、关键元素存在。
 
 用法：python tests/test_app_smoke.py
-（pytest 也可直接收集，见 tests/test_app.py）
 """
 
 from __future__ import annotations
@@ -15,24 +14,53 @@ sys.path.insert(0, str(ROOT))
 from streamlit.testing.v1 import AppTest  # noqa: E402
 
 
-def run_page(page: str, extra_widgets: dict | None = None) -> AppTest:
+def _run() -> AppTest:
     at = AppTest.from_file(str(ROOT / "app.py"), default_timeout=180)
     at.run()
-    at.sidebar.radio[0].set_value(page).run()
-    if extra_widgets:
-        for k, v in extra_widgets.items():
-            at.session_state[k] = v
-        at.run()
+    assert not at.exception, [e.value for e in at.exception]
+    return at
+
+
+def run_page(page: str) -> AppTest:
+    """切到「完整实验」并打开指定页面。"""
+    at = _run()
+    at.sidebar.radio(key="nav_mode").set_value("完整实验").run()
+    at.sidebar.radio(key="full_page").set_value(page).run()
     assert not at.exception, f"{page} 页面抛出异常：{[e.value for e in at.exception]}"
     return at
 
 
 def main() -> int:
+    # ---------------------------------------------------------- 课堂演示（默认）
+    at = _run()
+    assert at.radio(key="nav_mode").value == "课堂演示", "默认没有进入课堂演示"
+    assert at.button(key="demo_prev").disabled is True, "第 1 步的上一步应当禁用"
+    assert at.button(key="demo_next").label.startswith("下一步")
+    text = "".join(m.value for m in at.markdown)
+    assert "RMSE" not in text and "覆盖率" not in text, "默认页不应出现指标类信息"
+    print("[OK] 课堂演示：默认进入第 1 步，主按钮只有上一步/下一步，未暴露指标")
+
+    at.button(key="demo_next").click().run()
+    assert not at.exception, [e.value for e in at.exception]
+    assert at.button(key="demo_prev").disabled is False
+    print("[OK] 课堂演示：第 2 步（两种算法并排）无异常")
+
+    at.button(key="demo_next").click().run()
+    assert not at.exception, [e.value for e in at.exception]
+    assert at.button(key="demo_restart").label == "重新演示"
+    text3 = "".join(m.value for m in at.markdown)
+    assert "查看计算过程" in text3 or "User-CF：人的证据" in text3
+    print("[OK] 课堂演示：第 3 步（解释原因）无异常，按钮变为「重新演示」")
+
+    at.button(key="demo_restart").click().run()
+    assert at.button(key="demo_next").label.startswith("下一步")
+    print("[OK] 课堂演示：重新演示回到第 1 步")
+
+    # ---------------------------------------------------------- 完整实验
     for page in ["概览", "原理实验室", "电影推荐", "实验结果", "从 CF 到深度学习"]:
         at = run_page(page)
-        n_md = len(at.markdown)
-        print(f"[OK] {page:12s} markdown={n_md} dataframe={len(at.dataframe)} "
-              f"charts/other={len(at.get('plotly_chart')) if hasattr(at, 'get') else '-'}")
+        print(f"[OK] {page:12s} markdown={len(at.markdown)} dataframe={len(at.dataframe)} "
+              f"charts={len(at.get('plotly_chart')) if hasattr(at, 'get') else '-'}")
 
     # 交互：切换算法 + 改变 K + 推进一步
     at = run_page("原理实验室")

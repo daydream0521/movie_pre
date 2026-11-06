@@ -19,7 +19,7 @@ python scripts/download_data.py --check          # 确认 u.data / u.item 就绪
 # ③ 跑实验（E1–E3 约 10 秒，E4 约 90 秒，生成 results/*.csv 与 results/figures/*.png）
 python scripts/run_experiments.py
 
-# ④ 启动演示应用
+# ④ 启动演示应用（默认进入「课堂演示」第 1 步）
 python -m streamlit run app.py
 # 浏览器打开 http://localhost:8501
 ```
@@ -64,6 +64,7 @@ movie_pre/
 │   ├── collaborative_filter.py# User-CF / Item-CF / 向量化预测 / 推荐与解释
 │   ├── evaluation.py          # 指标、E1–E4 与扩展 MF 流程、作图
 │   ├── tutorial.py            # 5×5 可手算小矩阵与步骤轨迹
+│   ├── demo.py                # 课堂演示：固定案例 + 三步（不改变任何计算）
 │   ├── mf.py                  # 扩展：Bias-MF（ALS），仅用于评分预测对照
 │   └── ui.py                  # 配色、卡片、矩阵表格等渲染片段
 ├── scripts/
@@ -77,6 +78,7 @@ movie_pre/
 │   ├── experiment_report.md   # 实验设置、实测数据、结论、局限
 │   ├── presentation_outline.md# 13 页课堂展示结构
 │   ├── speaker_notes.md       # 逐页讲稿、Demo 流程、问答
+│   ├── demo_script.md         # 90 秒课堂演示脚本 + 内容迁移表 + 验收记录
 │   ├── run_log.txt            # 本次真实执行日志（实验 + 启动 + 测试）
 │   └── screenshots/           # 页面截图（PPT 可直接用）
 └── data/                      # MovieLens 原始数据（.gitignore，不入库）
@@ -189,7 +191,20 @@ CF 有效邻居覆盖率 = 测试评分中「至少用了 1 个正相似邻居�
 
 ---
 
-## 6. 五个页面
+## 6. 两个模式：课堂演示（默认）与完整实验
+
+打开应用默认进入 **课堂演示**：固定用户、三个连续步骤，主操作只有「上一步 / 下一步 / 重新演示」，
+不需要选用户、调 K、切算法；RMSE、覆盖率、公式、完整邻居表默认折叠在「查看计算过程」里。
+
+| 步骤 | 内容 | 一句话结论 |
+|---|---|---|
+| 1. 认识用户 | 用户 1 的三部 5 分电影 | 4 分以上 84 部，类型计数最多的是剧情 42 / 喜剧 26 / 爱情 17 |
+| 2. 看看推荐 | User-CF 与 Item-CF 的 Top-3 并排 | 6 个位置只有 1 部重合（《夺宝奇兵》） |
+| 3. 解释原因 | 左：相似用户；右：相似电影与贡献 | 两条证据链指向同一个推荐 |
+
+固定案例的选择规则与 90 秒操作脚本见 **`docs/demo_script.md`**。入口在演示页右上角的「完整实验 →」。
+
+**完整实验**保留原有全部页面（侧边栏导航）：
 
 | 页面 | 内容 |
 |---|---|
@@ -199,7 +214,8 @@ CF 有效邻居覆盖率 = 测试评分中「至少用了 1 个正相似邻居�
 | **实验结果** | E1/E2/E3/E4 的表格与图表，全部读 `results/*.csv`，附“怎么读”与原始文件下载 |
 | **从 CF 到深度学习** | 相似度 → 矩阵分解 → Embedding+MLP/NCF 的概念过渡，**含 Bias-MF 的同划分实测对照**，明确本实验主线是传统 CF |
 
-界面为深色投屏风格，**不使用任何海报图片**（不依赖联网），电影以标题 + 年份 + 类型标签呈现。
+两个模式共用 `src/ui.py` 的同一套设计 token（画布 #141c24、主操作 #efb85b、算法对照 #67c6c0）与同一套卡片/按钮，
+**不使用任何海报图片**（不依赖联网），电影以标题 + 年份 + 类型标签呈现。
 
 演示时可直接用 URL 直达某页：`http://localhost:8501/?page=lab`（`overview` / `lab` / `recommend` / `results` / `concept`）。
 

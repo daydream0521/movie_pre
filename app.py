@@ -38,7 +38,7 @@ st.set_page_config(
     page_title="MovieLens Explorer · 协同过滤",
     page_icon="🎬",
     layout="wide",
-    initial_sidebar_state="auto",
+    initial_sidebar_state="expanded",
 )
 inject_css()
 
@@ -1082,24 +1082,23 @@ def main():
 
     mode = st.sidebar.radio(
         "模式", ["课堂演示", "完整实验"], key="nav_mode",
-        help="课堂演示：按固定案例走三步；完整实验：原有的全部页面",
+        help="课堂演示：固定案例走三步；完整实验：原有的全部页面",
     )
     if mode == "课堂演示":
-        st.sidebar.caption("固定案例 · 三步看完一次协同过滤")
-        st.sidebar.markdown("---")
         choice = None
+        st.sidebar.caption("三步走完一次协同过滤；不需要选用户、调参数。")
+        st.sidebar.caption("需要原理推导、换用户或看指标，切到「完整实验」。")
     else:
         choice = label_to_key[st.sidebar.radio(
             "页面", labels, key="full_page", label_visibility="collapsed"
         )]
         st.sidebar.markdown("---")
-
-    if data_ok:
-        st.sidebar.caption(f"数据：{summary['n_ratings']:,} 条评分 · {summary['n_users']} 用户 · {summary['n_items']} 电影")
-    else:
-        st.sidebar.error("未找到数据，请先运行 `python scripts/download_data.py`")
-    st.sidebar.caption("模型：u1.base 训练（80%），u1.test 仅用于评估")
-    st.sidebar.caption("User-CF / Item-CF 均为本项目自行实现，无黑盒 predict")
+        if data_ok:
+            st.sidebar.caption(f"数据：{summary['n_ratings']:,} 条评分 · {summary['n_users']} 用户 · {summary['n_items']} 电影")
+        else:
+            st.sidebar.error("未找到数据，请先运行 `python scripts/download_data.py`")
+        st.sidebar.caption("模型：u1.base 训练（80%），u1.test 仅用于评估")
+        st.sidebar.caption("User-CF / Item-CF 均为本项目自行实现，无黑盒 predict")
 
     if choice is None:
         page_demo()

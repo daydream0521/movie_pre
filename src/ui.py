@@ -33,7 +33,7 @@ html, body, .stApp, input, button, textarea, select {
 section[data-testid="stSidebar"] { background:#101820; border-right:1px solid var(--line); }
 #MainMenu, footer, header[data-testid="stHeader"] { background:transparent; }
 [data-testid="stToolbar"], [data-testid="stDecoration"], [data-testid="stStatusWidget"] { display:none !important; }
-.block-container { padding-top:2.8rem; padding-bottom:3rem; max-width:1280px; }
+.block-container { padding-top:2.2rem; padding-bottom:1.8rem; max-width:1280px; }
 h1,h2,h3,h4 { color:var(--ink); }
 p,li { line-height:1.7; }
 a { color:var(--accent); }
@@ -83,12 +83,72 @@ section[data-testid="stSidebar"] .stRadio label:has(input:checked) { background:
 .brand { border-bottom:1px solid var(--line); padding:4px 0 24px; margin-bottom:18px; }
 .brand-title { font-size:1.2rem; font-weight:700; color:var(--ink); }
 .brand-subtitle { color:var(--muted); font-size:.85rem; margin-top:8px; }
+
+/* ---------- 课堂演示（与完整实验共用同一套 token 与控件） ---------- */
+.dm-head { display:flex; justify-content:space-between; align-items:flex-start; gap:16px; }
+.dm-brand { font-size:1.8rem; font-weight:700; color:var(--ink); letter-spacing:-.015em; }
+.dm-mode { color:var(--muted); font-size:.85rem; margin-top:4px; }
+.dm-link { margin-top:6px; }
+.dm-link a { color:var(--muted); font-size:.78rem; text-decoration:none;
+    border-bottom:1px dotted var(--line); }
+.dm-link a:hover { color:var(--accent); border-bottom-color:var(--accent); }
+.dm-pill { border:1px solid var(--line); color:var(--muted); border-radius:999px;
+    padding:5px 12px; font-size:.78rem; white-space:nowrap; }
+.dm-tabs { display:flex; gap:10px; margin:12px 0 14px; padding-bottom:8px;
+    border-bottom:1px solid var(--line); }
+.dm-tab { flex:1; text-align:center; padding:9px 8px; border-radius:5px;
+    color:var(--muted); font-size:.9rem; }
+.dm-tab.on { background:var(--surface); color:var(--accent); font-weight:650;
+    box-shadow:inset 3px 0 0 var(--accent); }
+.dm-q { font-size:1.32rem; font-weight:700; color:var(--ink); margin:0 0 4px; letter-spacing:-.01em; }
+.dm-sub { color:var(--muted); font-size:.9rem; margin-bottom:12px; }
+.dm-cards { display:grid; grid-template-columns:repeat(3,1fr); gap:14px; }
+.dm-cols { display:grid; grid-template-columns:1fr 1fr; gap:28px; }
+.dm-col-name { font-size:1.04rem; font-weight:700; color:var(--ink); }
+.dm-col-name.u { color:var(--accent); }
+.dm-col-name.i { color:var(--compare); }
+.dm-col-desc { color:var(--muted); font-size:.82rem; margin:3px 0 6px; }
+.dm-row { display:flex; align-items:center; gap:10px; padding:9px 2px;
+    border-bottom:1px solid var(--line); }
+.dm-row:last-child { border-bottom:none; }
+.dm-rank { color:var(--muted); font-size:.78rem; width:18px; font-variant-numeric:tabular-nums; }
+.dm-name { flex:1; font-size:.95rem; color:var(--ink); overflow-wrap:anywhere; }
+.dm-meta { color:var(--muted); font-size:.78rem; font-variant-numeric:tabular-nums; }
+.dm-chip { font-size:.7rem; padding:2px 8px; border-radius:3px; white-space:nowrap;
+    font-variant-numeric:tabular-nums; }
+.dm-chip.same { background:rgba(136,211,178,.16); color:#88d3b2; }
+.dm-chip.u { background:rgba(239,184,91,.16); color:var(--accent); }
+.dm-chip.i { background:rgba(103,198,192,.16); color:var(--compare); }
+.dm-chip.pos { background:rgba(136,211,178,.16); color:#88d3b2; }
+.dm-chip.neg { background:rgba(224,122,122,.18); color:#e07a7a; }
+.dm-film { background:var(--surface); border:1px solid var(--line); border-radius:5px;
+    padding:10px 14px; display:flex; gap:12px; align-items:center; margin-bottom:10px; }
+.dm-film .t { font-family:Georgia,"Microsoft YaHei",serif; font-size:1.05rem;
+    font-weight:600; color:var(--ink); }
+.dm-film .g { color:var(--muted); font-size:.8rem; margin-top:3px; }
+.dm-concl { margin-top:10px; padding:9px 14px; background:var(--surface);
+    border-left:3px solid var(--accent); border-radius:0 5px 5px 0;
+    color:var(--ink); font-size:.92rem; line-height:1.6; }
+.dm-hr { border:none; border-top:1px solid var(--line); margin:8px 0 10px; }
+
+/* ---------- 按钮：两种模式共用同一套外观 ---------- */
+div[data-testid="stButton"] button[kind="primary"] { background:var(--accent);
+    border:1px solid var(--accent); color:#211a0e; font-weight:600; }
+div[data-testid="stButton"] button[kind="primary"]:hover { background:#f3c877;
+    border-color:#f3c877; color:#211a0e; }
+div[data-testid="stButton"] button[kind="secondary"] { background:transparent;
+    border:1px solid var(--line); color:var(--ink); }
+div[data-testid="stButton"] button[kind="secondary"]:hover { border-color:var(--accent);
+    color:var(--accent); }
+div[data-testid="stButton"] button:disabled { opacity:.42; }
 @media(max-width:640px) {
  .block-container { padding:3rem 1rem 2rem; }
  .hero { padding-left:16px; }
  .section .sub { display:block; margin:4px 0 0; }
  .kpi { padding:12px 14px; }
  table.matrix th { font-size:.72rem; overflow-wrap:anywhere; }
+ .dm-cards { grid-template-columns:1fr; }
+ .dm-cols { grid-template-columns:1fr; gap:18px; }
 }
 @media(prefers-reduced-motion:reduce) { *,*::before,*::after { animation:none !important; transition:none !important; } }
 </style>

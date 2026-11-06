@@ -1,9 +1,10 @@
 """课堂演示页：固定案例 + 三个连续步骤（认识用户 → 看看推荐 → 解释原因）。
 
-设计约束（来自课堂可用性要求）：
+设计约束：
 - 固定案例由真实数据选出，运行时不改算法、不改结果；
 - 每步只有一个问题、一组主视觉、一句结论；
 - 主操作只有「上一步 / 下一步 / 重新演示」，不需要选用户、调 K、切算法；
+- 视觉与「完整实验」共用 src/ui.py 的同一套 token 与组件，不另立设计系统；
 - RMSE、覆盖率、公式、完整邻居表默认隐藏，放进「查看计算过程」。
 """
 
@@ -13,78 +14,11 @@ import numpy as np
 import streamlit as st
 
 from src.collaborative_filter import ALGO_ITEM, ALGO_USER, CFModel
+from src.ui import movie_card
 
 DEMO_UID = 1          # 固定演示用户（选出规则见 docs/demo_script.md）
-DEMO_K = 30           # 与完整实验一致的预测邻居上限，页面上不暴露
+DEMO_K = 30           # 与完整实验一致的邻居上限，页面正文不暴露
 DEMO_N = 3            # 每侧展示 3 条
-
-CSS = """
-<style>
-.stApp { background:#f3f4f6; }
-.block-container {
-  background:#ffffff; border:1px solid #e5e7eb; border-radius:16px;
-  padding:22px 30px 18px; margin:18px auto 24px; max-width:1080px;
-  box-shadow:0 1px 2px rgba(16,24,40,.04);
-}
-.block-container p, .block-container li { color:#374151; }
-h1,h2,h3,h4 { color:#111827; }
-.dm-head { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; }
-.dm-brand { font-size:1.38rem; font-weight:750; color:#111827; letter-spacing:-.01em; }
-.dm-mode { color:#6b7280; font-size:.82rem; margin-top:3px; }
-.dm-step-pill { background:#f3f4f6; color:#4b5563; border-radius:999px;
-  padding:5px 12px; font-size:.78rem; white-space:nowrap; }
-.dm-tabs { display:flex; gap:14px; margin:16px 0 14px; }
-.dm-tab { flex:1; text-align:center; padding:9px 8px; border-radius:9px;
-  color:#6b7280; font-size:.88rem; }
-.dm-tab.on { background:#e8f0fe; color:#1d4ed8; font-weight:650; }
-.dm-q { font-size:1.32rem; font-weight:750; color:#111827; margin:2px 0 4px; }
-.dm-sub { color:#6b7280; font-size:.86rem; margin-bottom:14px; }
-.dm-cards { display:grid; grid-template-columns:repeat(3,1fr); gap:16px; }
-.dm-card { border:1px solid #eef1f5; border-radius:12px; overflow:hidden; background:#fff; }
-.dm-cover { height:132px; background:#eef3f9; display:flex; flex-direction:column;
-  align-items:center; justify-content:center; color:#94a3b8; gap:6px; }
-.dm-cover .ico { font-size:1.5rem; opacity:.65; }
-.dm-cover .yr { font-size:.72rem; letter-spacing:.04em; }
-.dm-body { padding:10px 12px 14px; }
-.dm-title { font-size:.94rem; font-weight:650; color:#111827; line-height:1.35;
-  min-height:2.6em; overflow-wrap:anywhere; }
-.dm-rate { color:#b45309; font-size:.82rem; margin-top:6px; }
-.dm-cols { display:grid; grid-template-columns:1fr 1fr; gap:26px; }
-.dm-col-name { font-size:1rem; font-weight:750; color:#111827; }
-.dm-col-desc { color:#6b7280; font-size:.8rem; margin:2px 0 10px; }
-.dm-row { display:flex; align-items:center; gap:10px; padding:8px 0;
-  border-bottom:1px solid #f1f3f6; }
-.dm-row:last-child { border-bottom:none; }
-.dm-rank { color:#9ca3af; font-size:.8rem; width:18px; font-variant-numeric:tabular-nums; }
-.dm-name { flex:1; font-size:.9rem; color:#111827; overflow-wrap:anywhere; }
-.dm-chip { font-size:.7rem; padding:2px 7px; border-radius:999px; white-space:nowrap; }
-.dm-chip.c { background:#ecfdf5; color:#047857; }
-.dm-chip.u { background:#fef3c7; color:#b45309; }
-.dm-chip.i { background:#eff6ff; color:#1d4ed8; }
-.dm-meta { color:#9ca3af; font-size:.74rem; }
-.dm-film { background:#f8fafc; border:1px solid #eef1f5; border-radius:12px;
-  padding:14px 16px; display:flex; align-items:center; gap:14px; margin-bottom:14px; }
-.dm-film .t { font-size:1rem; font-weight:700; color:#111827; }
-.dm-film .g { color:#6b7280; font-size:.78rem; margin-top:2px; }
-.dm-concl { margin-top:14px; padding:11px 14px; background:#fafaf9;
-  border-left:3px solid #b45309; border-radius:0 8px 8px 0;
-  color:#44403c; font-size:.88rem; line-height:1.55; }
-.dm-hr { border:none; border-top:1px solid #eef1f5; margin:14px 0 10px; }
-div[data-testid="stButton"] button { border-radius:999px; min-height:40px; font-size:.9rem; }
-div[data-testid="stButton"] button[kind="primary"] { background:#a9502b; border:1px solid #a9502b;
-  color:#ffffff; }
-div[data-testid="stButton"] button[kind="primary"]:hover { background:#8f4223; border-color:#8f4223;
-  color:#ffffff; }
-div[data-testid="stButton"] button[kind="secondary"] { background:#ffffff; border:1px solid #d1d5db;
-  color:#4b5563; }
-div[data-testid="stButton"] button:disabled { background:#f9fafb; color:#d1d5db; border-color:#e5e7eb; }
-[data-testid="stExpander"] { border:1px solid #eef1f5; border-radius:10px; }
-[data-testid="stExpander"] summary { color:#6b7280; font-size:.82rem; }
-[data-testid="stExpander"] p, [data-testid="stExpander"] li,
-[data-testid="stExpander"] td, [data-testid="stExpander"] th { color:#374151; }
-[data-testid="stDataFrame"] { border:1px solid #eef1f5; border-radius:8px; }
-</style>
-"""
 
 
 # --------------------------------------------------------------------- 数据
@@ -106,17 +40,20 @@ def build_case(model: CFModel, meta: dict) -> dict | None:
     five.sort(key=lambda i: (-pop[i], i))
     history = [
         {"item_id": _iid(model, i), "rating": int(model.X[u, i]),
-         "title": meta[_iid(model, i)]["title"], "year": meta[_iid(model, i)]["year"]}
+         "title": meta[_iid(model, i)]["title"], "year": meta[_iid(model, i)]["year"],
+         "genres": meta[_iid(model, i)]["genres"]}
         for i in five[:DEMO_N]
     ]
 
-    # 高分电影的类型偏好（一句话结论用）
-    counts: dict[str, int] = {}
+    # 类型分布：只统计“可核对的计数”，不推断偏好强弱
+    genre_counts: dict[str, int] = {}
+    liked = 0
     for i in range(model.n_items):
         if model.M[u, i] and model.X[u, i] >= 4:
+            liked += 1
             for g in meta[_iid(model, i)]["genres_list"]:
-                counts[g] = counts.get(g, 0) + 1
-    top_genres = [g for g, _ in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))[:3]]
+                genre_counts[g] = genre_counts.get(g, 0) + 1
+    top_genres = sorted(genre_counts.items(), key=lambda kv: (-kv[1], kv[0]))[:3]
 
     # 2) 看看推荐：两种算法的 Top-3（与推荐页同一函数、同一 K）
     rec_u = model.recommend(u, ALGO_USER, K=DEMO_K, n=DEMO_N)
@@ -146,7 +83,7 @@ def build_case(model: CFModel, meta: dict) -> dict | None:
         score = min(len(ex_u.neighbors), len(ex_i.neighbors))
         if score > best:
             best, target = score, int(it)
-    if target is None:
+    if target is None:                       # 兜底：没有共同项时用 User-CF 的第一名
         target = int(rec_u.iloc[0]["item_idx"])
 
     ex_u = model.explain(u, target, ALGO_USER, K=DEMO_K)
@@ -166,10 +103,28 @@ def build_case(model: CFModel, meta: dict) -> dict | None:
                          "rating": int(r["user_rating"]), "contribution": float(r["contribution"])})
         return rows
 
+    def _sum_part(ex) -> dict:
+        """贡献合计与预测分的完整对账（表格只展示前几名，不能直接加总）。"""
+        total = float(ex.neighbors["contribution"].sum())
+        raw = float(ex.base + total)
+        return {"base": float(ex.base), "total": total, "raw": raw,
+                "pred": float(ex.pred), "clipped": abs(raw - float(ex.pred)) > 1e-6,
+                "n_all": int(len(ex.neighbors)), "n_shown": min(DEMO_N, len(ex.neighbors))}
+
+    in_u, in_i = target in set_u, target in set_i
+    if in_u and in_i:
+        rank_txt = "两种方法都把它排进了前 3"
+    elif in_u:
+        rank_txt = "User-CF 把它排进了前 3，Item-CF 没有"
+    elif in_i:
+        rank_txt = "Item-CF 把它排进了前 3，User-CF 没有"
+    else:
+        rank_txt = "它不在两边的 Top-3 里，这里只作为解释示例"
+
     return {
         "uid": DEMO_UID,
         "n_ratings": int(model.M[u].sum()),
-        "n_five": len(five),
+        "n_liked": liked,
         "history": history,
         "top_genres": top_genres,
         "rec_u": _rows(rec_u, "u"),
@@ -180,9 +135,10 @@ def build_case(model: CFModel, meta: dict) -> dict | None:
             "title": meta[_iid(model, target)]["title"],
             "year": meta[_iid(model, target)]["year"],
             "genres": meta[_iid(model, target)]["genres"],
-            "in_u": target in set_u, "in_i": target in set_i,
+            "in_u": in_u, "in_i": in_i, "rank_txt": rank_txt,
             "people": _people(ex_u), "films": _films(ex_i),
             "pred_u": float(ex_u.pred), "pred_i": float(ex_i.pred),
+            "sum_u": _sum_part(ex_u), "sum_i": _sum_part(ex_i),
             "n_u": len(ex_u.neighbors), "n_i": len(ex_i.neighbors),
             "ex_u": ex_u, "ex_i": ex_i,
         },
@@ -190,6 +146,14 @@ def build_case(model: CFModel, meta: dict) -> dict | None:
 
 
 # --------------------------------------------------------------------- 渲染
+# 课堂演示时隐藏侧边栏：只保留三步和两个按钮，导航放在页头的一行文字入口里
+HIDE_SIDEBAR = """
+<style>
+section[data-testid="stSidebar"], [data-testid="collapsedControl"] { display:none !important; }
+</style>
+"""
+
+
 def _head(step: int) -> None:
     labels = ["1. 认识用户", "2. 看看推荐", "3. 解释原因"]
     tabs = "".join(
@@ -198,7 +162,8 @@ def _head(step: int) -> None:
     st.markdown(
         f'<div class="dm-head"><div><div class="dm-brand">MovieLens Explorer</div>'
         f'<div class="dm-mode">课堂演示 · 固定案例</div></div>'
-        f'<div class="dm-step-pill">步骤 {step + 1}/3</div></div>'
+        f'<div style="text-align:right"><span class="dm-pill">步骤 {step + 1}/3</span>'
+        f'<div class="dm-link"><a href="?page=lab" target="_self">完整实验 →</a></div></div></div>'
         f'<div class="dm-tabs">{tabs}</div>',
         unsafe_allow_html=True,
     )
@@ -211,30 +176,35 @@ def _step1(case: dict) -> None:
         f'下面是其中 {len(case["history"])} 部打了满分的。</div>',
         unsafe_allow_html=True,
     )
-    cards = "".join(
-        f'<div class="dm-card"><div class="dm-cover"><div class="ico">🎬</div>'
-        f'<div class="yr">{int(m["year"]) if m["year"] == m["year"] else ""}</div></div>'
-        f'<div class="dm-body"><div class="dm-title">{m["title"]}</div>'
-        f'<div class="dm-rate">{"★" * m["rating"]} {m["rating"]} 分</div></div></div>'
-        for m in case["history"]
-    )
-    st.markdown(f'<div class="dm-cards">{cards}</div>', unsafe_allow_html=True)
+    cols = st.columns(3)
+    for col, m in zip(cols, case["history"]):
+        col.markdown(
+            movie_card(m["title"], m["year"], m["genres"], m["rating"],
+                       meta="训练集真实评分", item_id=m["item_id"],
+                       cover_text=m["title"], score_text=f"{m['rating']} 分"),
+            unsafe_allow_html=True,
+        )
+    genres = "、".join(f"{g}（{c} 部）" for g, c in case["top_genres"])
     st.markdown(
-        f'<div class="dm-concl">结论：他偏爱 {(" / ".join(case["top_genres"]))} 这类电影，'
-        f'接下来看看系统会给他推什么。</div>',
+        f'<div class="dm-concl">结论：他打过 4 分以上的电影共 {case["n_liked"]} 部，'
+        f'其中出现最多的类型是 {genres}。</div>',
         unsafe_allow_html=True,
     )
 
 
 def _step2(case: dict) -> None:
-    def column(rows: list[dict], title: str, desc: str, chip_cls: str, chip_txt: str) -> str:
+    def column(rows: list[dict], title: str, desc: str, side: str) -> str:
         items = ""
         for r in rows:
-            chip = ('<span class="dm-chip c">共同</span>' if r["tag"] == "common"
-                    else f'<span class="dm-chip {chip_cls}">{chip_txt}</span>')
+            if r["tag"] == "common":
+                chip = '<span class="dm-chip same">共同</span>'
+            elif r["tag"] == "only_u":
+                chip = '<span class="dm-chip u">仅 User-CF</span>'
+            else:
+                chip = '<span class="dm-chip i">仅 Item-CF</span>'
             items += (f'<div class="dm-row"><span class="dm-rank">{r["rank"]:02d}</span>'
                       f'<span class="dm-name">{r["title"]}</span>{chip}</div>')
-        return (f'<div><div class="dm-col-name">{title}</div>'
+        return (f'<div><div class="dm-col-name {side}">{title}</div>'
                 f'<div class="dm-col-desc">{desc}</div>{items}</div>')
 
     st.markdown(
@@ -242,12 +212,14 @@ def _step2(case: dict) -> None:
         '<div class="dm-sub">同一个用户、同一份历史评分，只有“相似”的定义不同。</div>',
         unsafe_allow_html=True,
     )
-    left = column(case["rec_u"], "User-CF", "找口味相似的人", "u", "仅 User-CF")
-    right = column(case["rec_i"], "Item-CF", "找评分模式相似的电影", "i", "仅 Item-CF")
+    left = column(case["rec_u"], "User-CF", "找口味相似的人", "u")
+    right = column(case["rec_i"], "Item-CF", "找评分模式相似的电影", "i")
     st.markdown(f'<div class="dm-cols">{left}{right}</div>', unsafe_allow_html=True)
+    same = case["n_common"]
+    tail = ("其余推荐完全不同——两种方法看的不是同一件事。" if same < 3
+            else "两种方法在这位用户身上给出了相同的前三名。")
     st.markdown(
-        f'<div class="dm-concl">结论：3 个位置里只有 {case["n_common"]} 部重合，'
-        '其余推荐完全不同——两种方法看的不是同一件事。</div>',
+        f'<div class="dm-concl">结论：3 个位置里有 {same} 部重合，{tail}</div>',
         unsafe_allow_html=True,
     )
 
@@ -259,46 +231,58 @@ def _step3(case: dict) -> None:
         '<div class="dm-sub">同一部电影，两种算法各自给出的证据。</div>',
         unsafe_allow_html=True,
     )
+    year = int(t["year"]) if t["year"] == t["year"] else "—"
     st.markdown(
-        f'<div class="dm-film"><div style="font-size:1.4rem">🎬</div><div>'
-        f'<div class="t">{t["title"]} ({int(t["year"]) if t["year"] == t["year"] else "—"})</div>'
-        f'<div class="g">{t["genres"]}　·　两种方法都把它排进了前 3</div></div></div>',
+        f'<div class="dm-film"><div style="font-size:1.3rem">🎬</div><div>'
+        f'<div class="t">{t["title"]} ({year})</div>'
+        f'<div class="g">{t["genres"]}　·　{t["rank_txt"]}</div></div></div>',
         unsafe_allow_html=True,
     )
 
     def rows_html(rows: list[dict]) -> str:
         out = ""
         for k, r in enumerate(rows, 1):
+            sign = "pos" if r["contribution"] >= 0 else "neg"
             out += (f'<div class="dm-row"><span class="dm-rank">{k:02d}</span>'
                     f'<span class="dm-name">{r["name"]}</span>'
                     f'<span class="dm-meta">{r["rating"]} 分</span>'
-                    f'<span class="dm-chip c">+{r["contribution"]:.3f}</span></div>')
+                    f'<span class="dm-chip {sign}">{r["contribution"]:+.3f}</span></div>')
         return out
 
-    left = (f'<div><div class="dm-col-name">User-CF：人的证据</div>'
+    left = (f'<div><div class="dm-col-name u">User-CF：人的证据</div>'
             f'<div class="dm-col-desc">这些相似用户喜欢它，所以推荐给你</div>'
             f'{rows_html(t["people"])}</div>')
-    right = (f'<div><div class="dm-col-name">Item-CF：电影的证据</div>'
+    right = (f'<div><div class="dm-col-name i">Item-CF：电影的证据</div>'
              f'<div class="dm-col-desc">这些你看过的电影和它相似，评分都很高</div>'
              f'{rows_html(t["films"])}</div>')
     st.markdown(f'<div class="dm-cols">{left}{right}</div>', unsafe_allow_html=True)
     st.markdown(
         '<div class="dm-concl">结论：左边看“和你像的人”，右边看“和它像的片”，'
-        '两条证据链指向同一个推荐。</div>',
+        '两条证据链指向同一个推荐；末尾的 +/− 是每个邻居对预测分的实际影响。</div>',
         unsafe_allow_html=True,
     )
 
     with st.expander("查看计算过程", expanded=False):
+        su, si = t["sum_u"], t["sum_i"]
+
+        def check(part: dict) -> str:
+            line = (f"用户均值 {part['base']:.3f} + 全部 {part['n_all']} 个邻居的贡献合计 "
+                    f"{part['total']:+.3f} = {part['raw']:.3f}")
+            if part["clipped"]:
+                return line + f"（超出 1–5，被裁剪为 {part['pred']:.2f}）"
+            return line + f"，与预测分 {part['pred']:.2f} 一致"
+
         st.markdown(
-            f"**预测公式（两种算法只在“邻居是谁”上不同）**\n\n"
-            f"`预测 = 该用户均值 + Σ 相似度 × (邻居评分 − 邻居均值) / Σ|相似度|`\n\n"
-            f"- 用户 ID：{case['uid']}；训练集评分 {case['n_ratings']} 条；邻居上限 K = {DEMO_K}"
-            f"（与完整实验一致，页面上不暴露这个参数）\n"
-            f"- 用户均值：{t['ex_u'].base:.3f}\n"
-            f"- 这部片：User-CF 用 {t['n_u']} 个相似用户，预测分 **{t['pred_u']:.2f}**；"
-            f"Item-CF 用 {t['n_i']} 部相似电影，预测分 **{t['pred_i']:.2f}**\n"
-            f"- 右表的“+0.xxx”是每个邻居对预测分的实际贡献（已除以 Σ|相似度|），"
-            f"加总后即上面的预测分。"
+            "**预测公式（两种算法只在“邻居是谁”上不同）**\n\n"
+            "`预测 = 该用户均值 + Σ 相似度 × (邻居评分 − 邻居均值) / Σ|相似度|`\n\n"
+            f"- 用户 ID：{case['uid']}；训练集评分 {case['n_ratings']} 条；"
+            f"邻居上限 K = {DEMO_K}（与完整实验一致，正文不展示这个参数）\n"
+            f"- 表格只列出贡献最大的 {su['n_shown']} 个邻居，"
+            f"**不能把这几行直接相加得到预测分**；完整对账如下：\n"
+            f"  - User-CF（{t['n_u']} 个邻居）：{check(su)}\n"
+            f"  - Item-CF（{t['n_i']} 个邻居）：{check(si)}\n"
+            f"- 单元格里的 +0.xxx / −0.xxx 是单个邻居的贡献（已除以 Σ|相似度|），"
+            "正贡献抬高预测、负贡献拉低预测。"
         )
         st.markdown("**User-CF 的完整邻居表（前 5）**")
         st.dataframe(t["ex_u"].neighbors.head(5), hide_index=True, use_container_width=True)
@@ -307,8 +291,8 @@ def _step3(case: dict) -> None:
 
 
 def render_demo(model: CFModel, meta: dict) -> None:
-    """课堂演示页入口：三步 + 两个按钮。"""
-    st.markdown(CSS, unsafe_allow_html=True)
+    """课堂演示页入口：三步 + 两个按钮（样式全部来自 src/ui.py）。"""
+    st.markdown(HIDE_SIDEBAR, unsafe_allow_html=True)
     case = build_case(model, meta)
     if case is None:
         st.warning("演示案例不可用：请先运行 `python scripts/download_data.py`。")
