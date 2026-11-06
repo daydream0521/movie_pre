@@ -19,6 +19,7 @@ from src.collaborative_filter import ALGO_ITEM, ALGO_USER, CFModel
 from src.data import (
     GENRES, build_train_matrix, dataset_summary, load_catalog, load_fold,
 )
+from src.demo import render_demo
 from src.tutorial import (
     DEFAULT_K, DEFAULT_TARGET_ITEM, DEFAULT_TARGET_USER, TUTORIAL_MOVIES, TUTORIAL_USERS,
     hand_calculation, movie_label, rating_frame, steps as tutorial_steps,
@@ -37,7 +38,7 @@ st.set_page_config(
     page_title="MovieLens Explorer · 协同过滤",
     page_icon="🎬",
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="auto",
 )
 inject_css()
 
@@ -95,13 +96,13 @@ def dark(fig: go.Figure, height: int = 320) -> go.Figure:
         template="plotly_dark",
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
-        font=dict(color="#c9d5ea", family="Inter, Microsoft YaHei", size=12),
+        font=dict(color="#b8c6ce", family="Segoe UI, Microsoft YaHei", size=12),
         margin=dict(l=8, r=8, t=36, b=8),
         height=height,
         legend=dict(bgcolor="rgba(0,0,0,0)", orientation="h", y=-0.18),
     )
     if fig.layout.title.text:
-        fig.update_layout(title=dict(font=dict(size=13, color="#e6eefc")))
+        fig.update_layout(title=dict(font=dict(size=13, color="#edf1f2")))
     else:
         fig.update_layout(margin=dict(l=8, r=8, t=14, b=8))
     fig.update_xaxes(gridcolor="rgba(255,255,255,0.06)", zeroline=False)
@@ -113,8 +114,8 @@ def dark(fig: go.Figure, height: int = 320) -> go.Figure:
 def page_overview():
     ratings, movies, users, items, summary = get_catalog()
     hero(
-        "MovieLens Explorer",
-        "recommender systems · user-cf & item-cf",
+        "推荐系统如何猜你喜欢",
+        "电影评分里的推荐原理",
         "用 10 万条真实电影评分，演示“推荐系统如何猜你喜欢”。"
         "所有相似度、预测分和推荐列表都由当前训练数据现算，界面里能看到每一步的加权来源。",
     )
@@ -135,6 +136,7 @@ def page_overview():
             text=dist.values, textposition="outside",
         ))
         fig.update_layout(showlegend=False)
+        fig.update_yaxes(range=[0, float(dist.max()) * 1.16])
         st.plotly_chart(dark(fig, 300), use_container_width=True)
         note("评分整体偏高（均值 3.53），所以“减去每个用户自己的均值”是必要的——否则爱打高分的用户会影响相似度。")
 
@@ -379,7 +381,7 @@ def _explain_block(model, meta: dict, u_idx: int, item_idx: int, algo: str, K: i
         nb.columns = ["来源（相似用户）", "相似度", "TA 给这部片的评分", "对预测的贡献"]
         contrib_col, label_col = "对预测的贡献", "来源（相似用户）"
     else:
-        nb["来源"] = [meta[int(model.train.item_ids[int(x)])]["title"] for x in nb["neighbor_item_id"]]
+        nb["来源"] = [meta[int(x)]["title"] for x in nb["neighbor_item_id"]]   # neighbor_item_id 已是电影 id
         nb = nb[["来源", "similarity", "user_rating", "contribution"]]
         nb.columns = ["来源（相似电影）", "相似度", "你给它的评分", "对预测的贡献"]
         contrib_col, label_col = "对预测的贡献", "来源（相似电影）"
@@ -1045,15 +1047,20 @@ def page_concept():
 
 
 # --------------------------------------------------------------------- 导航
+def page_demo():
+    render_demo(get_fold_model(1), get_movie_meta())
+
+
 def main():
     _, _, users, items, summary = get_catalog()
     data_ok = DATA_DIR.exists() and (DATA_DIR / "u.data").exists()
 
     st.sidebar.markdown(
-        '<div style="font-size:1.15rem;font-weight:700;color:#f2f6ff;padding:4px 0 2px">🎬 MovieLens Explorer</div>'
-        '<div style="color:#7f91b0;font-size:0.76rem;margin-bottom:16px">协同过滤课堂演示 · MovieLens 100K</div>',
+        '<div class="brand"><div class="brand-title">MovieLens Explorer</div>'
+        '<div class="brand-subtitle">协同过滤课堂演示 / 100K</div></div>',
         unsafe_allow_html=True,
     )
+
     pages = {
         "overview": ("概览", page_overview),
         "lab": ("原理实验室", page_lab),
@@ -1061,14 +1068,32 @@ def main():
         "results": ("实验结果", page_results),
         "concept": ("从 CF 到深度学习", page_concept),
     }
-    keys = list(pages)
-    labels = [pages[k][0] for k in keys]
-    # 支持 ?page=lab 直达某个页面（课堂演示时可直接收藏）
+    labels = [v[0] for v in pages.values()]
+    label_to_key = {v[0]: k for k, v in pages.items()}
+
+    # 首次加载时支持 ?page=lab 直达完整实验；之后以侧边栏选择为准
     wanted = st.query_params.get("page", "")
-    default_index = keys.index(wanted) if wanted in pages else 0
-    picked = st.sidebar.radio("导航", labels, index=default_index, label_visibility="collapsed")
-    choice = keys[labels.index(picked)]
-    st.sidebar.markdown("---")
+    if "nav_mode" not in st.session_state:
+        if wanted in pages:
+            st.session_state["nav_mode"] = "完整实验"
+            st.session_state["full_page"] = pages[wanted][0]
+        else:
+            st.session_state["nav_mode"] = "课堂演示"
+
+    mode = st.sidebar.radio(
+        "模式", ["课堂演示", "完整实验"], key="nav_mode",
+        help="课堂演示：按固定案例走三步；完整实验：原有的全部页面",
+    )
+    if mode == "课堂演示":
+        st.sidebar.caption("固定案例 · 三步看完一次协同过滤")
+        st.sidebar.markdown("---")
+        choice = None
+    else:
+        choice = label_to_key[st.sidebar.radio(
+            "页面", labels, key="full_page", label_visibility="collapsed"
+        )]
+        st.sidebar.markdown("---")
+
     if data_ok:
         st.sidebar.caption(f"数据：{summary['n_ratings']:,} 条评分 · {summary['n_users']} 用户 · {summary['n_items']} 电影")
     else:
@@ -1076,7 +1101,10 @@ def main():
     st.sidebar.caption("模型：u1.base 训练（80%），u1.test 仅用于评估")
     st.sidebar.caption("User-CF / Item-CF 均为本项目自行实现，无黑盒 predict")
 
-    pages[choice][1]()
+    if choice is None:
+        page_demo()
+    else:
+        pages[choice][1]()
 
 
 if __name__ == "__main__":
