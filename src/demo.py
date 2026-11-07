@@ -172,16 +172,15 @@ def _head(step: int) -> None:
 def _step1(case: dict) -> None:
     st.markdown(
         '<div class="dm-q">这位用户喜欢哪些电影？</div>'
-        f'<div class="dm-sub">他在训练集里评过 {case["n_ratings"]} 部电影，'
-        f'下面是其中 {len(case["history"])} 部打了满分的。</div>',
+        f'<div class="dm-sub">训练集里评过 {case["n_ratings"]} 部，这是其中 {len(case["history"])} 部满分片。</div>',
         unsafe_allow_html=True,
     )
     cols = st.columns(3)
     for col, m in zip(cols, case["history"]):
         col.markdown(
             movie_card(m["title"], m["year"], m["genres"], m["rating"],
-                       meta="训练集真实评分", item_id=m["item_id"],
-                       cover_text=m["title"], score_text=f"{m['rating']} 分"),
+                       item_id=m["item_id"], cover_text=m["title"],
+                       score_text=f"{m['rating']} 分"),
             unsafe_allow_html=True,
         )
     genres = "、".join(f"{g}（{c} 部）" for g, c in case["top_genres"])
@@ -202,14 +201,15 @@ def _step2(case: dict) -> None:
                 chip = '<span class="dm-chip u">仅 User-CF</span>'
             else:
                 chip = '<span class="dm-chip i">仅 Item-CF</span>'
-            items += (f'<div class="dm-row"><span class="dm-rank">{r["rank"]:02d}</span>'
+            row_cls = "dm-row same" if r["tag"] == "common" else "dm-row"
+            items += (f'<div class="{row_cls}"><span class="dm-rank">{r["rank"]:02d}</span>'
                       f'<span class="dm-name">{r["title"]}</span>{chip}</div>')
         return (f'<div><div class="dm-col-name {side}">{title}</div>'
                 f'<div class="dm-col-desc">{desc}</div>{items}</div>')
 
     st.markdown(
         '<div class="dm-q">两种算法分别推荐了什么？</div>'
-        '<div class="dm-sub">同一个用户、同一份历史评分，只有“相似”的定义不同。</div>',
+        '<div class="dm-sub">同一份历史评分，两种“相似”的定义。</div>',
         unsafe_allow_html=True,
     )
     left = column(case["rec_u"], "User-CF", "找口味相似的人", "u")
@@ -228,24 +228,28 @@ def _step3(case: dict) -> None:
     t = case["target"]
     st.markdown(
         f'<div class="dm-q">为什么推荐《{t["title"]}》？</div>'
-        '<div class="dm-sub">同一部电影，两种算法各自给出的证据。</div>',
+        '<div class="dm-sub">同一部电影，两套证据。</div>',
         unsafe_allow_html=True,
     )
     year = int(t["year"]) if t["year"] == t["year"] else "—"
     st.markdown(
-        f'<div class="dm-film"><div style="font-size:1.3rem">🎬</div><div>'
+        f'<div class="dm-film"><div>'
         f'<div class="t">{t["title"]} ({year})</div>'
         f'<div class="g">{t["genres"]}　·　{t["rank_txt"]}</div></div></div>',
         unsafe_allow_html=True,
     )
 
     def rows_html(rows: list[dict]) -> str:
+        top = max((abs(r["contribution"]) for r in rows), default=1.0) or 1.0
         out = ""
         for k, r in enumerate(rows, 1):
             sign = "pos" if r["contribution"] >= 0 else "neg"
+            width = max(6, round(abs(r["contribution"]) / top * 100))
             out += (f'<div class="dm-row"><span class="dm-rank">{k:02d}</span>'
                     f'<span class="dm-name">{r["name"]}</span>'
                     f'<span class="dm-meta">{r["rating"]} 分</span>'
+                    f'<span class="dm-bar"><i class="{"neg" if r["contribution"] < 0 else ""}" '
+                    f'style="width:{width}%"></i></span>'
                     f'<span class="dm-chip {sign}">{r["contribution"]:+.3f}</span></div>')
         return out
 
@@ -258,7 +262,7 @@ def _step3(case: dict) -> None:
     st.markdown(f'<div class="dm-cols">{left}{right}</div>', unsafe_allow_html=True)
     st.markdown(
         '<div class="dm-concl">结论：左边看“和你像的人”，右边看“和它像的片”，'
-        '两条证据链指向同一个推荐；末尾的 +/− 是每个邻居对预测分的实际影响。</div>',
+        '两条证据指向同一个推荐；末尾 +/− 是该邻居对预测分的影响。</div>',
         unsafe_allow_html=True,
     )
 

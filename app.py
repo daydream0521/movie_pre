@@ -96,17 +96,23 @@ def dark(fig: go.Figure, height: int = 320) -> go.Figure:
         template="plotly_dark",
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
-        font=dict(color="#b8c6ce", family="Segoe UI, Microsoft YaHei", size=12),
-        margin=dict(l=8, r=8, t=36, b=8),
+        font=dict(color="#c3d0d8", family='"Segoe UI","Microsoft YaHei",sans-serif', size=12),
+        margin=dict(l=8, r=8, t=38, b=8),
         height=height,
-        legend=dict(bgcolor="rgba(0,0,0,0)", orientation="h", y=-0.18),
+        bargap=0.38,
+        hoverlabel=dict(bgcolor="#1c2833", bordercolor="#344451",
+                        font=dict(color="#edf1f2", size=12)),
+        legend=dict(bgcolor="rgba(0,0,0,0)", orientation="h", y=-0.2,
+                    font=dict(size=11)),
     )
     if fig.layout.title.text:
-        fig.update_layout(title=dict(font=dict(size=13, color="#edf1f2")))
+        fig.update_layout(title=dict(font=dict(size=13.5, color="#edf1f2"), x=0, xanchor="left"))
     else:
         fig.update_layout(margin=dict(l=8, r=8, t=14, b=8))
-    fig.update_xaxes(gridcolor="rgba(255,255,255,0.06)", zeroline=False)
-    fig.update_yaxes(gridcolor="rgba(255,255,255,0.06)", zeroline=False)
+    fig.update_xaxes(gridcolor="rgba(255,255,255,0.06)", zeroline=False,
+                     tickfont=dict(size=11), title_font=dict(size=11))
+    fig.update_yaxes(gridcolor="rgba(255,255,255,0.06)", zeroline=False,
+                     tickfont=dict(size=11), title_font=dict(size=11))
     return fig
 
 
@@ -328,30 +334,47 @@ def _pick_random_user(all_users: list[int], key: str = "rec_user_select") -> Non
 
 
 # --------------------------------------------------------------------- 页面：电影推荐
-def _rec_cards(df: pd.DataFrame, model, meta: dict, empty_hint: str = ""):
-    """Top-N 电影卡片：徽标是推荐分（排序依据），小字给出预测评分与邻居数。"""
+def _rec_cards(df: pd.DataFrame, model, meta: dict, empty_hint: str = "", compact: bool = False):
+    """Top-N 电影卡片：徽标是推荐分（排序依据），底部给出预测评分与邻居数。
+
+    ``compact=True`` 用于并排对比（每列只有半屏宽），改用横向行卡，避免标题被挤碎。
+    """
     if df.empty:
         if empty_hint:
             st.caption(empty_hint)
+        return
+    if compact:
+        for i, (_, r) in enumerate(df.iterrows()):
+            item_id = int(model.train.item_ids[int(r["item_idx"])])
+            m = meta[item_id]
+            st.markdown(
+                movie_card(
+                    m["title"], m["year"], m["genres"], float(r["pred"]),
+                    item_id=item_id, compact=True, rank=i + 1,
+                    stats=[("预测", f"{r['pred']:.2f}"),
+                           ("推荐", "回退" if r["is_fallback"] else f"{r['rank_score']:.2f}")],
+                ),
+                unsafe_allow_html=True,
+            )
         return
     cols = st.columns(5)
     for i, (_, r) in enumerate(df.iterrows()):
         item_id = int(model.train.item_ids[int(r["item_idx"])])
         m = meta[item_id]
-        nbr_txt = f"{int(r['n_neighbors'])} 个邻居" if not r["is_fallback"] else "无邻居"
+        nbr = "—" if r["is_fallback"] else f"{int(r['n_neighbors'])}"
         cols[i % 5].markdown(
             movie_card(
                 m["title"], m["year"], m["genres"], float(r["pred"]),
-                meta=f"预测 {r['pred']:.2f} · {nbr_txt}",
                 rank=i + 1, fallback=bool(r["is_fallback"]), item_id=item_id,
                 score_text="回退" if r["is_fallback"] else f"{r['rank_score']:.2f}",
+                stats=[("预测", f"{r['pred']:.2f}"), ("邻居", nbr)],
             ),
             unsafe_allow_html=True,
         )
 
 
 def _explain_block(model, meta: dict, u_idx: int, item_idx: int, algo: str, K: int,
-                   heading: str | None = None, show_chart: bool = True) -> None:
+                   heading: str | None = None) -> None:
     """渲染单条推荐的加权依据：来源表 + 贡献条形图。"""
     ex = model.explain(u_idx, item_idx, algo, K=K)
     item_id = int(model.train.item_ids[item_idx])
@@ -359,14 +382,18 @@ def _explain_block(model, meta: dict, u_idx: int, item_idx: int, algo: str, K: i
     if heading:
         st.markdown(f"**{heading}**")
 
+    year_txt = f"({int(m['year'])})" if pd.notna(m["year"]) else ""
+    fb_line = '<div class="evfb">无可用邻居，已回退到用户均值</div>' if ex.is_fallback else ""
     st.markdown(
-        f'<div class="kpi" style="margin-bottom:8px">'
-        f'<div class="label">{m["genres"]}</div>'
-        f'<div class="value" style="font-size:1.05rem">{m["title"]}'
-        f'{" (" + str(int(m["year"])) + ")" if pd.notna(m["year"]) else ""}</div>'
-        f'<div class="hint">推荐分 {ex.rank_score:.3f}　|　预测 {ex.pred:.3f}　|　'
-        f'mean(u) {ex.base:.3f}　|　Σ|sim| {ex.sim_sum:.3f}'
-        f'{"　|　均值回退" if ex.is_fallback else ""}</div></div>',
+        f'<div class="evhead">'
+        f'<div class="evtitle">{m["title"]} <span class="evyear">{year_txt}</span></div>'
+        f'<div class="evgenre">{m["genres"]}</div>'
+        f'<div class="evmetrics">'
+        f'<div><span class="k">推荐分</span><span class="v amber">{ex.rank_score:.3f}</span></div>'
+        f'<div><span class="k">预测分</span><span class="v">{ex.pred:.2f}</span></div>'
+        f'<div><span class="k">用户均值</span><span class="v">{ex.base:.2f}</span></div>'
+        f'<div><span class="k">Σ|sim|</span><span class="v">{ex.sim_sum:.2f}</span></div>'
+        f'</div>{fb_line}</div>',
         unsafe_allow_html=True,
     )
     st.caption(ex.formula)
@@ -387,19 +414,31 @@ def _explain_block(model, meta: dict, u_idx: int, item_idx: int, algo: str, K: i
         nb.columns = ["来源（相似电影）", "相似度", "你给它的评分", "对预测的贡献"]
         contrib_col, label_col = "对预测的贡献", "来源（相似电影）"
 
-    st.dataframe(nb.style.format({
-        "相似度": "{:.4f}", "对预测的贡献": "{:+.4f}",
-        "TA 给这部片的评分": "{:.0f}", "你给它的评分": "{:.0f}",
-    }), hide_index=True, use_container_width=True)
+    # 只展示贡献最大的 8 个：完整 30 个邻居在折叠区里，避免页面被表格和长图撑开
+    rating_col = "TA 给这部片的评分" if algo == ALGO_USER else "你给它的评分"
+    top = nb.head(8)
+    scale = max(abs(v) for v in top[contrib_col]) or 1.0
+    rows_html = ""
+    for i, (_, r) in enumerate(top.iterrows(), 1):
+        c = float(r[contrib_col])
+        sign = "pos" if c >= 0 else "neg"
+        width = max(6, round(abs(c) / scale * 100))
+        rows_html += (
+            f'<div class="dm-row"><span class="dm-rank">{i:02d}</span>'
+            f'<span class="dm-name">{r[label_col]}</span>'
+            f'<span class="dm-meta">sim {r["相似度"]:.3f} · {r[rating_col]:.0f} 分</span>'
+            f'<span class="dm-bar"><i class="{"neg" if c < 0 else ""}" style="width:{width}%"></i></span>'
+            f'<span class="dm-chip {sign}">{c:+.3f}</span></div>'
+        )
+    st.markdown(f'<div class="evlist">{rows_html}</div>', unsafe_allow_html=True)
+    if len(nb) > len(top):
+        st.caption(f"只显示贡献最大的 {len(top)} 个，共 {len(nb)} 个邻居。")
 
-    if show_chart:
-        cnt = nb.iloc[::-1]
-        fig = go.Figure(go.Bar(
-            x=cnt[contrib_col], y=cnt[label_col], orientation="h",
-            marker_color=[GOOD if v >= 0 else "#ef4444" for v in cnt[contrib_col]],
-        ))
-        fig.update_layout(showlegend=False, title="各邻居对预测分的贡献（已除以 Σ|sim|）")
-        st.plotly_chart(dark(fig, max(200, 24 * len(cnt))), use_container_width=True)
+    with st.expander(f"全部 {len(nb)} 个邻居", expanded=False):
+        st.dataframe(nb.style.format({
+            "相似度": "{:.3f}", "对预测的贡献": "{:+.3f}",
+            "TA 给这部片的评分": "{:.0f}", "你给它的评分": "{:.0f}",
+        }), hide_index=True, use_container_width=True)
 
 
 def page_recommend():
@@ -411,8 +450,7 @@ def page_recommend():
     hero(
         "电影推荐体验",
         "real data · u1.base 训练",
-        "选一位真实用户，用训练集里他的历史评分生成 Top-10，并展开任意一条的加权依据。"
-        "切到“双算法对比”，可以直接看到 User-CF 与 Item-CF 给出的不同结果。",
+        "选一位真实用户，看训练集历史生成的 Top-10，以及每一条的加权依据。",
     )
 
     all_users = [int(u) for u in users]
@@ -469,8 +507,7 @@ def page_recommend():
             m = meta[mid]
             cols[i % 4].markdown(
                 movie_card(m["title"], m["year"], m["genres"], float(r["rating"]),
-                           meta=f"真实评分 {r['rating']:.0f} 分", item_id=mid,
-                           score_text=f"{r['rating']:.0f} 分"),
+                           item_id=mid, compact=True),
                 unsafe_allow_html=True,
             )
         if top_seen.empty:
@@ -500,21 +537,16 @@ def page_recommend():
         else:
             st.caption("该用户没有 4 分以上的评分。")
 
-        section("排序分与预测分的区别", "")
+        section("推荐分 vs 预测分", "")
         note(
-            "列表按 <b>推荐分</b>（相似度加权和 Σ sim·偏差）排序；卡片小字里的 <b>预测</b> "
-            "是同一组邻居的加权平均（+ 用户均值）。"
-            "用加权平均排序会让“只有 1 个弱邻居、恰好打 5 分”的冷门片被推到榜首，"
-            "所以 Top-N 用加权和、评分预测用加权平均。"
+            "徽标是 <b>推荐分</b>（Σ sim·偏差，用于排序，可大于 5）；卡片底部是 <b>预测分</b>（1–5 星）。"
+            "用加权平均排序会把“只有一个弱邻居”的冷门片推到榜首，所以排序用加权和。"
         )
 
     if view == "单算法":
         section(f"Top-{topn} 推荐", f"{algo_label} · K = {K} · 已排除训练集评过的 {n_train_ratings} 部")
         _rec_cards(rec_main, model, meta)
-        st.caption(
-            "徽标是**推荐分**（相似度加权和，用来排序，不是 1–5 的评分）；"
-            "卡片小字里的“预测”才是同一组邻居的加权平均分。"
-        )
+        st.caption("徽标＝推荐分（排序用）；卡片底部为预测分与邻居数。")
         capped = int((rec_main["pred"] >= 4.995).sum())
         if capped:
             st.caption(
@@ -557,14 +589,11 @@ def page_recommend():
         cu, ci = st.columns(2)
         with cu:
             st.markdown(f"**User-CF** · 找相似的人")
-            _rec_cards(rec_u.head(5), model, meta)
+            _rec_cards(rec_u.head(5), model, meta, compact=True)
         with ci:
             st.markdown(f"**Item-CF** · 找相似的片")
-            _rec_cards(rec_i.head(5), model, meta)
-        st.caption(
-            "两边各展示前 5 名。徽标是推荐分（排序依据），小字里的“预测”是评分预测；"
-            "同一部片在两个列表里的名次往往不同——这正是“找相似的人”和“找相似的片”的差别。"
-        )
+            _rec_cards(rec_i.head(5), model, meta, compact=True)
+        st.caption("两边各展示前 5 名；同一部片的名次差异，就是“找人”与“找片”的区别。")
 
         section("逐条差异", "同一部电影在两个列表里的位置")
         dict_u = {int(r["item_idx"]): r for _, r in rec_u.iterrows()}
@@ -599,10 +628,10 @@ def page_recommend():
         e1, e2 = st.columns(2)
         with e1:
             _explain_block(model, meta, u_idx, item_idx, ALGO_USER, K,
-                           heading="User-CF：哪些相似用户影响了它", show_chart=False)
+                           heading="User-CF：哪些相似用户影响了它")
         with e2:
             _explain_block(model, meta, u_idx, item_idx, ALGO_ITEM, K,
-                           heading="Item-CF：哪些相似电影影响了它", show_chart=False)
+                           heading="Item-CF：哪些相似电影影响了它")
 
         with st.expander("为什么两个列表差异这么大？", expanded=False):
             st.markdown(
@@ -629,10 +658,10 @@ def page_recommend():
         e1, e2 = st.columns(2)
         with e1:
             _explain_block(model, meta, u_idx, item_idx, ALGO_USER, K,
-                           heading="User-CF：找相似的人", show_chart=True)
+                           heading="User-CF：找相似的人")
         with e2:
             _explain_block(model, meta, u_idx, item_idx, ALGO_ITEM, K,
-                           heading="Item-CF：找相似的片", show_chart=True)
+                           heading="Item-CF：找相似的片")
 
 # --------------------------------------------------------------------- 页面：实验结果
 def page_results():
@@ -680,7 +709,8 @@ def page_results():
                     name=names[a], x=["MAE", "RMSE"],
                     y=[idx.loc[a, "mae_mean"], idx.loc[a, "rmse_mean"]],
                     marker_color=color,
-                    error_y=dict(type="data", array=[idx.loc[a, "mae_std"], idx.loc[a, "rmse_std"]], visible=True),
+                    error_y=dict(type="data", array=[idx.loc[a, "mae_std"], idx.loc[a, "rmse_std"]],
+                                 visible=True, thickness=1, width=4, color="#7f95a6"),
                 ))
             fig.update_layout(barmode="group", title="五折平均误差 ± 标准差（越低越好）")
             st.plotly_chart(dark(fig, 320), use_container_width=True)
@@ -913,21 +943,24 @@ def page_results():
 
             c1, c2 = st.columns([1.25, 1])
             with c1:
+                bars = e5[e5["model"] != "用户均值基准"]      # 基准 1.04 会压扁 0.92–0.94 的差异
                 fig = go.Figure(go.Bar(
-                    x=e5["model"], y=e5["rmse"],
-                    error_y=dict(type="data", array=e5["rmse_std"], visible=True),
-                    marker=dict(color=[colors5[m] for m in e5["model"]],
-                                opacity=[0.55, 0.55, 0.55, 1.0, 1.0]),
-                    width=0.62,
+                    x=bars["model"], y=bars["rmse"],
+                    error_y=dict(type="data", array=bars["rmse_std"], visible=True,
+                                 thickness=1, width=4, color="#7f95a6"),
+                    marker=dict(color=[colors5[m] for m in bars["model"]],
+                                opacity=[0.55, 0.55, 1.0, 1.0]),
+                    width=0.58,
                 ))
-                for name, v, err in zip(e5["model"], e5["rmse"], e5["rmse_std"]):
-                    fig.add_annotation(x=name, y=v + err + 0.006, text=f"{v:.4f}", showarrow=False,
+                for name, v, err in zip(bars["model"], bars["rmse"], bars["rmse_std"]):
+                    fig.add_annotation(x=name, y=v + err + 0.0022, text=f"{v:.4f}", showarrow=False,
                                        font=dict(size=11, color="#cbd6ea"))
                 fig.update_layout(showlegend=False,
-                                  title="五模型 RMSE（越低越好，误差棒为折间标准差）",
-                                  yaxis_range=[e5["rmse"].min() - 0.03, e5["rmse"].max() + 0.08])
+                                  title="四模型 RMSE（越低越好，误差棒为折间标准差）",
+                                  yaxis_range=[bars["rmse"].min() - 0.012,
+                                               (bars["rmse"] + bars["rmse_std"]).max() + 0.014])
                 st.plotly_chart(dark(fig, 340), use_container_width=True)
-                st.caption("高亮的两根是本次重点：Bias-MF 与 NCF；纵轴截断，只用于比较相对高低。")
+                st.caption("用户均值基准 1.0437 未画入（会压扁纵轴）；高亮为 Bias-MF 与 NCF。")
 
             with c2:
                 fold = st.radio("展示哪一折", [1, 2, 3, 4, 5], horizontal=True,
