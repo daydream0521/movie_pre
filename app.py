@@ -175,7 +175,8 @@ def page_overview():
     st.markdown(
         "- **原理实验室**：5×5 小矩阵，一步一步看相似度、Top-K 邻居和加权求和，数值可手算复核。\n"
         "- **电影推荐**：选一个真实用户，切换 User-CF / Item-CF，看 Top-10 以及每一条推荐的依据。\n"
-        "- **实验结果**：E1 五折对比、E2 邻居数 K、E3 训练记录减少，全部来自 `results/*.csv` 的实际运行。\n"
+        "- **实验结果**：E1 五折对比、E2 邻居数 K、E3 训练记录减少、E4 Top-10、E5 神经网络对照，"
+        "全部来自 `results/*.csv` 的实际运行。\n"
         "- **从 CF 到深度学习**：相似度 → 潜在向量 → Embedding+MLP 的概念过渡。"
     )
 
@@ -637,7 +638,7 @@ def page_recommend():
 def page_results():
     hero(
         "实验结果",
-        "e1 · e2 · e3 · e4",
+        "e1 · e2 · e3 · e4 · e5",
         "全部指标由 scripts/run_experiments.py 在官方五折上真实跑出，页面只读取 results/*.csv。"
         "图表不写死结论，只标注怎么读。",
     )
@@ -647,13 +648,18 @@ def page_results():
     e3 = read_results("e3_sparsity.csv")
     e4 = read_results("e4_summary.csv")
     e4_fold = read_results("e4_fold_results.csv")
+    e5 = read_results("e5_comparison.csv")
+    e5_fold = read_results("e5_fold_results.csv")
+    e5_curves = read_results("e5_curves.csv")
+    e5_sum = read_results("e5_summary.csv")
 
     if e1 is None:
         note("还没有实验输出。请在项目根目录运行：<code>python scripts/run_experiments.py</code>", warn=True)
         return
 
-    tab1, tab2, tab3, tab4 = st.tabs(
-        ["E1 五折算法比较", "E2 邻居数 K", "E3 训练记录减少", "E4 Top-10 推荐质量"]
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(
+        ["E1 五折算法比较", "E2 邻居数 K", "E3 训练记录减少", "E4 Top-10 推荐质量",
+         "E5 神经网络对照"]
     )
 
     with tab1:
@@ -882,6 +888,111 @@ def page_results():
                     "这也是评分预测（E1 用加权平均）与 Top-N 推荐（E4 用加权和）必须分开评价的原因。"
                 )
 
+    with tab5:
+        if e5 is None or e5_fold is None or e5_curves is None:
+            note(
+                "E5 结果缺失：请在装好 PyTorch 的环境里运行 "
+                "<code>python scripts/run_e5.py</code>（本项目用 conda 环境 deeplearning），"
+                "生成 results/e5_*.csv 后本页自动出现。E1–E4 不受影响。",
+                warn=True,
+            )
+        else:
+            colors5 = {"用户均值基准": "#94a3b8", "User-CF": ACCENT, "Item-CF": "#f59e0b",
+                       "Bias-MF": "#67c6c0", "NCF 风格 MLP": "#a855f7"}
+            idx5 = e5.set_index("model")
+            ncf5, base5 = idx5.loc["NCF 风格 MLP"], idx5.loc["用户均值基准"]
+            user5, item5, mf5 = idx5.loc["User-CF"], idx5.loc["Item-CF"], idx5.loc["Bias-MF"]
+
+            kpi_row([
+                ("NCF RMSE", f"{ncf5['rmse']:.4f}", f"± {ncf5['rmse_std']:.4f}（5 折标准差）"),
+                ("NCF MAE", f"{ncf5['mae']:.4f}", f"± {ncf5['mae_std']:.4f}"),
+                ("相对均值基准", f"−{base5['rmse'] - ncf5['rmse']:.4f}",
+                 f"{base5['rmse']:.4f} → {ncf5['rmse']:.4f}"),
+                ("训练耗时", f"{ncf5['train_seconds']:.1f} s/折", "单卡 GPU，仅训练"),
+            ])
+
+            c1, c2 = st.columns([1.25, 1])
+            with c1:
+                fig = go.Figure(go.Bar(
+                    x=e5["model"], y=e5["rmse"],
+                    error_y=dict(type="data", array=e5["rmse_std"], visible=True),
+                    marker=dict(color=[colors5[m] for m in e5["model"]],
+                                opacity=[0.55, 0.55, 0.55, 1.0, 1.0]),
+                    width=0.62,
+                ))
+                for name, v, err in zip(e5["model"], e5["rmse"], e5["rmse_std"]):
+                    fig.add_annotation(x=name, y=v + err + 0.006, text=f"{v:.4f}", showarrow=False,
+                                       font=dict(size=11, color="#cbd6ea"))
+                fig.update_layout(showlegend=False,
+                                  title="五模型 RMSE（越低越好，误差棒为折间标准差）",
+                                  yaxis_range=[e5["rmse"].min() - 0.03, e5["rmse"].max() + 0.08])
+                st.plotly_chart(dark(fig, 340), use_container_width=True)
+                st.caption("高亮的两根是本次重点：Bias-MF 与 NCF；纵轴截断，只用于比较相对高低。")
+
+            with c2:
+                fold = st.radio("展示哪一折", [1, 2, 3, 4, 5], horizontal=True,
+                                key="e5_fold", index=0)
+                frow = e5_fold[e5_fold["fold"] == fold].iloc[0]
+                best = int(frow["best_epoch"])
+                d = e5_curves[e5_curves["fold"] == fold].sort_values("epoch")
+                d2 = d[d["epoch"] >= 2]
+                fig2 = go.Figure()
+                fig2.add_trace(go.Scatter(x=d2["epoch"], y=d2["train_rmse"], mode="lines",
+                                          name="训练集", line=dict(color="#94a3b8", width=2)))
+                fig2.add_trace(go.Scatter(x=d2["epoch"], y=d2["val_rmse"], mode="lines",
+                                          name="验证集", line=dict(color="#a855f7", width=2)))
+                fig2.add_vline(x=best, line=dict(color=ACCENT, width=1.2, dash="dot"))
+                fig2.add_annotation(x=best, y=max(d2["val_rmse"].max(), d2["train_rmse"].max()),
+                                    text=f"最佳 epoch {best}", showarrow=False,
+                                    xshift=4, yshift=10, font=dict(size=10, color=ACCENT))
+                lo = min(d2["train_rmse"].min(), d2["val_rmse"].min())
+                hi = max(d2["train_rmse"].max(), d2["val_rmse"].max())
+                fig2.update_layout(title=f"Fold {fold}：训练 / 验证 RMSE（该折测试 RMSE {frow['rmse']:.4f}）",
+                                   xaxis_title="epoch", yaxis_title="RMSE",
+                                   yaxis_range=[lo - 0.01, hi + 0.02])
+                st.plotly_chart(dark(fig2, 340), use_container_width=True)
+                st.caption("从第 2 轮起画：第 1 轮尚未收敛（RMSE≈2.05），会把纵轴压扁。")
+
+            st.markdown(
+                f"- NCF 比均值基准低 **{base5['rmse'] - ncf5['rmse']:.4f}** RMSE"
+                f"（{base5['rmse']:.4f} → {ncf5['rmse']:.4f}），Embedding 确实学到了一部分结构。\n"
+                f"- 但**没有超过传统方法**：比 User-CF 高 {ncf5['rmse'] - user5['rmse']:+.4f}、"
+                f"比 Bias-MF 高 {ncf5['rmse'] - mf5['rmse']:+.4f}，"
+                f"与 Item-CF 相差 {abs(ncf5['rmse'] - item5['rmse']):.4f}"
+                f"（NCF {'略低' if ncf5['rmse'] < item5['rmse'] else '略高'}）。\n"
+                f"- 曲线明显分离：训练 RMSE 一路降到 {d['train_rmse'].min():.3f}，"
+                f"验证最低 {d['val_rmse'].min():.3f} 后回升——早停停在验证最优处，避免继续过拟合。"
+            )
+            note(
+                "<b>口径</b>：这是 <b>NCF 风格的显式评分预测</b>（ID Embedding 拼接 + MLP + MSE），"
+                "不是原论文 NeuMF 的复现（原论文面向隐式反馈，用 BPR / 负采样）。"
+            )
+
+            with st.expander("逐折记录 · 参数设置 · 数据下载", expanded=False):
+                show5 = e5_fold[["fold", "mae", "rmse", "best_epoch", "epochs_run",
+                                 "best_val_rmse", "train_seconds", "device"]].copy()
+                st.dataframe(show5.style.format({"mae": "{:.4f}", "rmse": "{:.4f}",
+                                                 "best_val_rmse": "{:.4f}",
+                                                 "train_seconds": "{:.1f}"}),
+                             hide_index=True, use_container_width=True)
+                if e5_sum is not None:
+                    sm = e5_sum.iloc[0]
+                    hidden = "→".join(str(sm["hidden"]).split("x"))
+                    st.caption(
+                        f"模型：Embedding({int(sm['emb_dim'])}) → MLP({hidden}→1)，batch {int(sm['batch_size'])}，"
+                        f"lr {sm['lr']:.0e}，MSE 损失，早停 patience 6 / 最多 80 轮，设备 {sm['device']}。"
+                        "验证集从每折训练集内随机切 10%，测试集不参与训练与选参。"
+                    )
+                cols = st.columns(2)
+                for col, (label, fname) in zip(cols * 2, [
+                    ("逐折指标", "e5_fold_results.csv"), ("每轮损失", "e5_curves.csv"),
+                    ("五折汇总", "e5_summary.csv"), ("统一对照", "e5_comparison.csv"),
+                ]):
+                    fp = RESULTS / fname
+                    if fp.exists():
+                        col.download_button(f"{label}（{fname}）", fp.read_bytes(), file_name=fname,
+                                            use_container_width=True, key=f"dl_{fname}")
+
     section("原始文件", "可直接放进报告 / PPT")
     files = [
         ("E1 逐折", "e1_fold_results.csv"), ("E1 汇总", "e1_summary.csv"),
@@ -969,59 +1080,47 @@ def page_concept():
         )
         st.caption("NeuMF 再用一路 GMF 内积与 MLP 并联，兼顾线性与非线性。")
 
-    section("扩展实验：Bias-MF 实测对照", "同一五折 · 同一评分预测任务 · 同一指标")
-    mf_summary = read_results("mf_summary.csv")
-    e1s = read_results("e1_summary.csv")
-    if mf_summary is None or e1s is None:
-        note("运行 <code>python scripts/run_experiments.py --only mf</code> 后，这里会显示实测对照。", warn=True)
+    section("同划分实测：Bias-MF 与 NCF 风格 MLP", "官方五折 · 评分预测 · MAE / RMSE")
+    e5s = read_results("e5_comparison.csv")
+
+    if e5s is None:
+        note(
+            "Bias-MF 与 NCF 的对照结果缺失：运行 <code>python scripts/run_experiments.py --only mf</code> "
+            "与 <code>python scripts/run_e5.py</code> 后这里会显示。",
+            warn=True,
+        )
     else:
-        e1_idx = e1s.set_index("algorithm")
-        m = mf_summary.iloc[0]
-        rows = [
-            {"模型": "用户均值基准", "MAE": f"{e1_idx.loc['baseline','mae_mean']:.4f} ± {e1_idx.loc['baseline','mae_std']:.4f}",
-             "RMSE": f"{e1_idx.loc['baseline','rmse_mean']:.4f} ± {e1_idx.loc['baseline','rmse_std']:.4f}",
-             "做法": "只预测该用户的训练均值"},
-            {"模型": "User-CF", "MAE": f"{e1_idx.loc['user','mae_mean']:.4f} ± {e1_idx.loc['user','mae_std']:.4f}",
-             "RMSE": f"{e1_idx.loc['user','rmse_mean']:.4f} ± {e1_idx.loc['user','rmse_std']:.4f}",
-             "做法": "相似用户的加权偏差"},
-            {"模型": "Item-CF", "MAE": f"{e1_idx.loc['item','mae_mean']:.4f} ± {e1_idx.loc['item','mae_std']:.4f}",
-             "RMSE": f"{e1_idx.loc['item','rmse_mean']:.4f} ± {e1_idx.loc['item','rmse_std']:.4f}",
-             "做法": "相似电影的加权偏差"},
-            {"模型": "Bias-MF（扩展）", "MAE": f"{m['mae_mean']:.4f} ± {m['mae_std']:.4f}",
-             "RMSE": f"{m['rmse_mean']:.4f} ± {m['rmse_std']:.4f}",
-             "做法": f"μ+b_u+b_i+p_u·q_i，ALS 求解（k={int(m['k'])}，{int(m['iterations'])} 轮）"},
-        ]
-        st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
+        how = {
+            "用户均值基准": "只取该用户的训练均值",
+            "User-CF": "相似用户的加权偏差",
+            "Item-CF": "相似电影的加权偏差",
+            "Bias-MF": "μ + b_u + b_i + p_u·q_i（ALS）",
+            "NCF 风格 MLP": "Embedding + MLP(64→32→1)，MSE，早停",
+        }
+        rows5 = [{
+            "模型": r["model"],
+            "RMSE": f"{r['rmse']:.4f} ± {r['rmse_std']:.4f}",
+            "MAE": f"{r['mae']:.4f} ± {r['mae_std']:.4f}",
+            "做法": how.get(r["model"], ""),
+        } for _, r in e5s.iterrows()]
+        st.dataframe(pd.DataFrame(rows5), hide_index=True, use_container_width=True)
 
-        mf_vals = [e1_idx.loc["baseline", "rmse_mean"], e1_idx.loc["user", "rmse_mean"],
-                   e1_idx.loc["item", "rmse_mean"], float(m["rmse_mean"])]
-        mf_errs = [e1_idx.loc["baseline", "rmse_std"], e1_idx.loc["user", "rmse_std"],
-                   e1_idx.loc["item", "rmse_std"], float(m["rmse_std"])]
-        fig = go.Figure(go.Bar(
-            x=["均值基准", "User-CF", "Item-CF", "Bias-MF"],
-            y=mf_vals,
-            error_y=dict(type="data", array=mf_errs, visible=True),
-            marker_color=["#94a3b8", ACCENT, "#f59e0b", "#a855f7"],
-            width=0.55,
-        ))
-        for label, v, e in zip(["均值基准", "User-CF", "Item-CF", "Bias-MF"], mf_vals, mf_errs):
-            fig.add_annotation(x=label, y=v + e + 0.012, text=f"{v:.4f}", showarrow=False,
-                               font=dict(size=11, color="#cbd6ea"))
-        fig.update_layout(showlegend=False, title="五折 RMSE 对照（越低越好，误差棒为折间标准差）",
-                          yaxis_range=[min(mf_vals) - 0.1, max(mf_vals) + 0.09])
-        st.plotly_chart(dark(fig, 330), use_container_width=True)
-
-        lower = "Bias-MF" if float(m["rmse_mean"]) < e1_idx["rmse_mean"].drop("baseline").min() else "传统 CF"
+        i5 = e5s.set_index("model")
+        ncf, base = i5.loc["NCF 风格 MLP"], i5.loc["用户均值基准"]
+        user, mf = i5.loc["User-CF"], i5.loc["Bias-MF"]
         st.markdown(
-            f"- 实测结果：Bias-MF 的 RMSE 为 **{m['rmse_mean']:.4f}**，"
-            f"User-CF {e1_idx.loc['user','rmse_mean']:.4f}、Item-CF {e1_idx.loc['item','rmse_mean']:.4f}、"
-            f"均值基准 {e1_idx.loc['baseline','rmse_mean']:.4f}。这次 **{lower}** 更低。\n"
-            f"- 训练成本完全不同：CF 建相似度只要几十毫秒；Bias-MF 平均每折训练 "
-            f"{m['train_seconds_mean']:.1f} s（纯 CPU 的 ALS 迭代），还要调 k 与正则项。\n"
-            "- 它**不参与**推荐页演示：矩阵分解很难回答“为什么是这几个人影响了预测”，"
-            "而本课程的重点正是把这一步摊开。\n"
-            "- 这是同一划分下的实测对照，可以放心引用；但它只覆盖评分预测任务，"
-            "**没有做 Top-N 评测**，所以不能据此说“深度学习更好”。"
+            f"- NCF 比均值基准低 **{base['rmse'] - ncf['rmse']:.4f}** RMSE，"
+            f"但没有超过本次的传统方法：比 User-CF 高 {ncf['rmse'] - user['rmse']:+.4f}、"
+            f"比 Bias-MF 高 {ncf['rmse'] - mf['rmse']:+.4f}。\n"
+            "- 训练 RMSE 持续降到 0.82 附近，验证 RMSE 停在 0.93–0.94 后回升——**过拟合**，"
+            "早停把模型停在验证最优处。\n"
+            "- 原因不复杂：8 万条评分下，显式偏置 `μ + b_u + b_i` 直接吃掉了评分的主效应，"
+            "而 MLP 只能隐式地逼近它。这不代表深度模型在更大数据或隐式反馈上更差。"
+        )
+        note(
+            "本次 NCF 是 <b>Embedding + MLP 的显式评分回归</b>（1–5 星、MSE），"
+            "<b>不是 NeuMF 复现</b>（原论文面向隐式反馈、用 BPR / 负采样）。"
+            "完整的五模型图、逐折记录与训练曲线见「实验结果 → E5 神经网络对照」。"
         )
 
     section("为什么主线只做传统 CF", "")
@@ -1029,10 +1128,9 @@ def page_concept():
         "- 课程要求是讲清 User-CF / Item-CF 的基本思想，并在小数据集上跑通 Demo；"
         "传统 CF 的每一步都能摊开给人看。\n"
         "- 10 万条评分、943 用户的数据量下，CF 在 CPU 上几秒钟就能跑完五折，适合课堂现场运行。\n"
-        "- Bias-MF 与 NCF 风格 MLP 都在**同一划分、同一任务、同一指标**下做过离线实测，可以引用；"
-        "结论是**轻量 NCF 没有跑赢传统方法**（RMSE 0.9407 vs User-CF 0.9370、Bias-MF 0.9202）。\n"
-        "- 这些对照只覆盖评分预测，NCF 也不是 NeuMF 复现；课堂界面仍只演示 CF，"
-        "不在推荐页那一侧悄悄换模型，否则前面的可解释性就白做了。"
+        "- 上一节的对照只覆盖评分预测，且都是离线实验；课堂界面仍只演示 CF，"
+        "不在推荐页那一侧悄悄换模型，否则前面的可解释性就白做了。\n"
+        "- 若要扩展，必须沿用官方五折、同一任务与同一指标，并明确标注为扩展实验。"
     )
 
     section("选型速查", "")

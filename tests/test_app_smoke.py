@@ -11,6 +11,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+import pandas as pd  # noqa: E402
 from streamlit.testing.v1 import AppTest  # noqa: E402
 
 
@@ -61,6 +62,24 @@ def main() -> int:
         at = run_page(page)
         print(f"[OK] {page:12s} markdown={len(at.markdown)} dataframe={len(at.dataframe)} "
               f"charts={len(at.get('plotly_chart')) if hasattr(at, 'get') else '-'}")
+
+    # 实验结果页：E5 标签、Fold 切换、页面数字与 CSV 一致
+    at = run_page("实验结果")
+    labels = [tb.label for tb in at.tabs]
+    assert any("E5" in x for x in labels), f"缺少 E5 标签：{labels}"
+    assert at.radio(key="e5_fold").value == 1, "E5 默认没有停在 Fold 1"
+    at.radio(key="e5_fold").set_value(3).run()
+    assert not at.exception, [e.value for e in at.exception]
+    assert at.radio(key="e5_fold").value == 3
+    e5 = pd.read_csv(ROOT / "results" / "e5_comparison.csv", encoding="utf-8-sig").set_index("model")
+    text = "".join(m.value for m in at.markdown)
+    assert f"{e5.loc['NCF 风格 MLP', 'rmse']:.4f}" in text, "页面 RMSE 与 e5_comparison.csv 不一致"
+    print(f"[OK] 实验结果：E5 标签存在，默认 Fold 1、可切到 Fold 3，RMSE 与 CSV 一致")
+
+    at = run_page("从 CF 到深度学习")
+    text = "".join(m.value for m in at.markdown)
+    assert "NeuMF" in text and "E5 神经网络对照" in text, "概念页缺少 NCF 定位或 E5 指引"
+    print("[OK] 从 CF 到深度学习：含 NeuMF 口径声明与 E5 指引")
 
     # 交互：切换算法 + 改变 K + 推进一步
     at = run_page("原理实验室")
