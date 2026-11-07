@@ -1,0 +1,2 @@
+﻿algorithm,folds,mae_mean,mae_std,rmse_mean,rmse_std,train_seconds_mean,best_epoch_mean,emb_dim,hidden,batch_size,lr,device
+ncf,5,0.7425,0.0051,0.9407,0.0065,7.5,11.6,32,64x32,256,0.0005,cuda

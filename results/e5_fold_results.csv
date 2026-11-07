@@ -1,0 +1,6 @@
+﻿fold,algorithm,mae,rmse,best_epoch,epochs_run,best_val_rmse,train_seconds,n_train,n_val,device
+1,ncf,0.7442,0.9467,19,24,0.9351,10.8,72000,8000,cuda
+2,ncf,0.7456,0.9462,7,12,0.9325,5.3,72000,8000,cuda
+3,ncf,0.7425,0.9381,13,18,0.9465,8.2,72000,8000,cuda
+4,ncf,0.7339,0.931,15,20,0.9343,9.4,72000,8000,cuda
+5,ncf,0.7465,0.9417,4,9,0.9404,3.9,72000,8000,cuda

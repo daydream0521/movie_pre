@@ -41,6 +41,9 @@ python scripts/run_experiments.py --only e2     # 邻居数 K
 python scripts/run_experiments.py --only e3     # 训练记录减少
 python scripts/run_experiments.py --only e4     # Top-10 推荐质量（约 90 s）
 python scripts/run_experiments.py --only mf     # 扩展：Bias-MF 对照（约 20 s）
+
+# E5 需要 PyTorch（本项目用 conda 环境 deeplearning），与主流程解耦
+D:/BaiduNetdiskDownload/envs/deeplearning/python.exe scripts/run_e5.py   # 约 45 s（GPU）
 ```
 
 跑测试：
@@ -66,10 +69,12 @@ movie_pre/
 │   ├── tutorial.py            # 5×5 可手算小矩阵与步骤轨迹
 │   ├── demo.py                # 课堂演示：固定案例 + 三步（不改变任何计算）
 │   ├── mf.py                  # 扩展：Bias-MF（ALS），仅用于评分预测对照
+│   ├── ncf.py                 # E5：NCF 风格 MLP（PyTorch），只在 run_e5.py 中使用
 │   └── ui.py                  # 配色、卡片、矩阵表格等渲染片段
 ├── scripts/
 │   ├── download_data.py       # 下载/断点续传/解压/就绪检查
-│   ├── run_experiments.py     # E1–E4 批量实验
+│   ├── run_experiments.py     # E1–E4 + Bias-MF 批量实验
+│   ├── run_e5.py              # E5：NCF 五折实验（需 torch 环境）
 │   ├── shot_views.py          # 页面截图（人工检查视觉用，非必需）
 │   └── shot_lab_steps.py      # 逐步截图（同上）
 ├── results/                   # 实跑输出的 CSV 与 PNG（已入库，供报告/PPT 引用）
@@ -175,7 +180,19 @@ CF 有效邻居覆盖率 = 测试评分中「至少用了 1 个正相似邻居�
 | Item-CF | 0.7332 ± 0.0089 | 0.9415 ± 0.0112 | 约 0.05 s |
 | Bias-MF（扩展） | **0.7225 ± 0.0062** | **0.9202 ± 0.0072** | 约 3.8 s/折 |
 
-评分预测上 Bias-MF 更好，但它**不参与演示界面**（无法指到“是谁影响了预测”），也没有做 Top-N 与 NCF 对照。
+评分预测上 Bias-MF 更好，但它**不参与演示界面**（无法指到“是谁影响了预测”），也没有做 Top-N 评测。
+
+**E5 NCF 风格的显式评分预测（PyTorch，5 折）**
+
+| 模型 | MAE | RMSE | 训练耗时 |
+|---|---|---|---|
+| User-CF | 0.7295 ± 0.0048 | 0.9370 ± 0.0061 | 0.02 s（建相似度） |
+| Item-CF | 0.7332 ± 0.0089 | 0.9415 ± 0.0112 | 0.05 s |
+| Bias-MF | **0.7225 ± 0.0062** | **0.9202 ± 0.0072** | 3.8 s/折 |
+| NCF 风格 MLP | 0.7425 ± 0.0051 | 0.9407 ± 0.0065 | 7.5 s/折（GPU） |
+
+Embedding(32)+MLP(64→32→1)、MSE、早停（验证集从每折训练集内切 10%）。**轻量 NCF 没有跑赢传统方法**，
+细节与原因见 `docs/experiment_report.md` §8。注意：这是**显式评分回归**，不是 NeuMF 复现。
 
 **E4 Top-10 推荐（5 折，候选 = 全部未评分电影，相关 = 测试评分 ≥4）**
 
@@ -246,4 +263,5 @@ CF 有效邻居覆盖率 = 测试评分中「至少用了 1 个正相似邻居�
 3. 评分预测误差低 ≠ 推荐体验好：E1 与 E4 是两个任务，必须分开看。
 4. 完全冷启动（0 条交互的新用户/新电影）在 CF 下无解，只能回退均值；矩阵分解同样解决不了“零交互”这一情形。
 5. 相似度为静态计算，未建模用户口味随时间的漂移（时间戳未使用）。
-6. 做了 Bias-MF 的评分预测对照（见上表），但**没有做 NCF**，也没有做 MF 的 Top-N 评测，因此不对深度学习与传统 CF 的总体优劣下结论。
+6. 做了 Bias-MF 与 NCF 风格 MLP 的评分预测对照（见上表与 §E5），但两者都**只覆盖评分预测**；
+   NCF 不是 NeuMF 复现，也没有做隐式反馈与大规模数据实验，因此不对深度学习与传统 CF 的总体优劣下结论。
